@@ -16,7 +16,7 @@ enforces wiki discipline automatically, so the agent cannot let the vault rot.
 | Rule | How |
 |------|-----|
 | Index-first | prefetch() scores pages against each turn; system prompt carries a live catalog |
-| No drift | every `write` regenerates index.md stats/bullets and appends to log.md |
+| No drift | every `write` regenerates index.md stats/bullets and appends to log.db/log.md |
 | Typed pages | folder decides type: entities/, concepts/, sources/, answers/ |
 | Read-only sources | write_page rejects anything under sources/ |
 | No orphans | lint reports pages with zero inbound wikilinks |
@@ -630,10 +630,10 @@ fastmcp run mcp_server.py:mcp --transport http --host 127.0.0.1 --port 8000
 ```
 
 The Hermes plugin currently retains its native compatibility surface while
-sharing the vault implementation. Normal provider recall and writes remain
-local/direct through the shared `MemoryStore`; only completed-session ingest is
-routed through MCP. This keeps per-turn memory fast while giving the central
-server ownership of the asynchronous ingest pipeline.
+sharing the vault implementation. With `access_mode: mcp` (the default), provider
+read/search/list/write/lint/log operations are routed through the central MCP
+server. Set `access_mode: direct` only for an explicit offline fallback. The
+central server also owns the asynchronous ingest pipeline.
 
 ### Standalone use without Hermes
 

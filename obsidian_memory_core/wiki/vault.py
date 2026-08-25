@@ -674,6 +674,11 @@ class WikiVault:
                     parts.append(f"- [[{key}|{page['title']}]] - {summary}")
             parts.append("")
         self.index_path.write_text("\n".join(parts), encoding="utf-8")
+        self.append_log(
+            "INDEX_REBUILT",
+            f"pages={len(pages) + 1}; index_path={self.index_path}; status=success",
+            quiet=True,
+        )
 
     def _existing_summaries(self) -> dict[str, str]:
         try:

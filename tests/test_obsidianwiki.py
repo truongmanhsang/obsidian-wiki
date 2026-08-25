@@ -172,6 +172,10 @@ class TestWritePath:
         log = vault.log_tail(30)
         assert "[[entities/A.md|A]]" in idx or "[[entities/A|A]]" in idx
         assert "WRITE:" in log
+        assert "INDEX_REBUILT" in log
+        assert "pages=" in log
+        assert "index_path=" in log
+        assert "status=success" in log
 
     def test_sources_is_read_only(self, provider):
         r = _call(provider, action="write", page="sources/x",

@@ -167,7 +167,7 @@ def migrate_log_md_to_db(vault) -> int:
 # ---------------------------------------------------------------------------
 
 def append_log(vault, kind: str, description: str, quiet: bool = False) -> None:
-    kinds = {"SETUP", "INGEST", "QUERY", "LINT", "REFLECT", "WRITE", "UPDATE", "READ"}
+    kinds = {"SETUP", "INGEST", "QUERY", "LINT", "REFLECT", "WRITE", "UPDATE", "READ", "INDEX_REBUILT"}
     kind = kind.upper() if kind.upper() in kinds else "QUERY"
     today = date.today().isoformat()
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -214,7 +214,10 @@ def append_log(vault, kind: str, description: str, quiet: bool = False) -> None:
                 rid, msg = row
                 m = re.search(r"\b(\d+) ops\b", msg)
                 count = int(m.group(1)) if m else 0
-                new_msg = f"{count + 1} ops (latest: {description[:80]})"
+                if kind == "INDEX_REBUILT":
+                    new_msg = description
+                else:
+                    new_msg = f"{count + 1} ops (latest: {description[:80]})"
                 conn.execute(
                     "UPDATE logs SET message=?, created_at=? WHERE id=?;",
                     (new_msg, now_iso, rid),
