@@ -18,6 +18,11 @@ Config (config.yaml):
       prefetch_limit: 3                    # max wiki hits injected per turn
       prefetch_min_query_chars: 10         # skip trivial queries
       inject_index_on_start: true          # system prompt lists top pages
+      access_mode: "mcp"                   # mcp (default) or direct
+      mcp_url: "http://127.0.0.1:8765/mcp" # MCP server endpoint
+
+By default, wiki reads and writes go through the central Obsidian Wiki MCP
+server. Set `access_mode: direct` only for an explicit local/offline fallback.
 
 No network, no API keys, no embedding model - pure stdlib file operations.
 
@@ -27,11 +32,73 @@ so hermes-agent updates never clobber it.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from concurrent.futures import ThreadPoolExecutor
+
+try:
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamablehttp_client
+except ImportError:  # pragma: no cover - direct mode remains usable
+    ClientSession = None  # type: ignore
+    streamablehttp_client = None  # type: ignore
+
+_MCP_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="obsidianwiki-mcp")
+_MCP_DEFAULT_URL = "http://127.0.0.1:8765/mcp"
+
+def _run_async(coro):
+    """Run an async MCP call on a fresh event loop in a worker thread.
+
+    Hermes may dispatch provider tools while its own asyncio loop is active.
+    AnyIO's Streamable HTTP transport owns a TaskGroup, so reusing or nesting
+    that loop can collapse into the unhelpful ``TaskGroup`` error. Always use a
+    dedicated loop and close the coroutine if submission itself fails.
+    """
+    def run() -> object:
+        return asyncio.run(coro)
+
+    try:
+        return _MCP_EXECUTOR.submit(run).result()
+    except Exception:
+        # asyncio.run closes the coroutine when it starts; if submit failed
+        # before the worker ran, avoid an unawaited-coroutine warning.
+        if not getattr(coro, "cr_running", False) and getattr(coro, "cr_frame", None) is not None:
+            coro.close()
+        raise
+
+
+def _mcp_error_detail(exc: Exception) -> str:
+    """Expose nested exception details instead of hiding TaskGroup causes."""
+    nested = getattr(exc, "exceptions", None)
+    if nested:
+        return "; ".join(_mcp_error_detail(item) for item in nested)
+    return str(exc) or type(exc).__name__
+
+async def _call_mcp(url: str, tool_name: str, arguments: dict) -> dict:
+    if ClientSession is None or streamablehttp_client is None:
+        raise RuntimeError("MCP Python SDK is not installed")
+    async with streamablehttp_client(url) as (read, write, _):
+        async with ClientSession(read, write) as client:
+            await client.initialize()
+            result = await client.call_tool(tool_name, arguments)
+            if getattr(result, "isError", False):
+                raise RuntimeError(str(result))
+            payload = []
+            for item in getattr(result, "content", []) or []:
+                text = getattr(item, "text", None)
+                if text:
+                    payload.append(text)
+            raw = "\n".join(payload)
+            try:
+                value = json.loads(raw)
+                return value if isinstance(value, dict) else {"result": value}
+            except json.JSONDecodeError:
+                return {"result": raw}
 
 from agent.memory_provider import MemoryProvider, RecallStatus
 from tools.registry import tool_error
@@ -209,7 +276,37 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                 "default": "true",
                 "choices": ["true", "false"],
             },
+            {
+                "key": "access_mode",
+                "description": "Wiki access transport: MCP by default, or direct local fallback",
+                "default": "mcp",
+                "choices": ["mcp", "direct"],
+            },
+            {
+                "key": "mcp_url",
+                "description": "Obsidian Wiki MCP Streamable HTTP endpoint",
+                "default": _MCP_DEFAULT_URL,
+            },
         ]
+
+    def _mcp_enabled(self) -> bool:
+        return str(self._config.get("access_mode", "mcp")).lower() not in {
+            "direct", "local", "filesystem"
+        }
+
+    def _mcp_url(self) -> str:
+        return str(self._config.get("mcp_url", _MCP_DEFAULT_URL))
+
+    def _mcp_call(self, tool_name: str, arguments: dict) -> dict:
+        result = _run_async(_call_mcp(self._mcp_url(), tool_name, arguments))
+        if not isinstance(result, dict):
+            raise RuntimeError("MCP returned a non-object result")
+        return result
+
+    def _direct_fallback_allowed(self) -> bool:
+        return str(self._config.get("mcp_fallback", "false")).lower() in {
+            "1", "true", "yes"
+        }
 
     def save_config(self, values: Dict[str, Any], hermes_home: str) -> None:
         from pathlib import Path
@@ -369,6 +466,35 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
             if not vault.exists():
                 return tool_error(self.unavailable_reason())
             action = args.get("action", "")
+            if self._mcp_enabled():
+                mcp_tools = {
+                    "read": "memory_read",
+                    "search": "memory_search",
+                    "list": "memory_list",
+                    "write": "memory_write",
+                    "lint": "memory_lint",
+                    "log": "memory_log",
+                }
+                tool_name = mcp_tools.get(action)
+                if tool_name is not None:
+                    allowed_arguments = {
+                        "read": {"page"},
+                        "search": {"query", "limit"},
+                        "list": {"limit"},
+                        "write": {"page", "content", "note", "expected_revision", "allow_duplicate"},
+                        "lint": set(),
+                        "log": {"limit"},
+                    }
+                    mcp_args = {
+                        key: value for key, value in args.items()
+                        if key in allowed_arguments[action] and value is not None
+                    }
+                    try:
+                        return json.dumps(self._mcp_call(tool_name, mcp_args), ensure_ascii=False)
+                    except Exception as exc:
+                        if not self._direct_fallback_allowed():
+                            return tool_error(f"Obsidian Wiki MCP unavailable: {_mcp_error_detail(exc)}")
+                        logger.warning("MCP unavailable; using direct fallback: %s", exc)
             if action == "read":
                 return self._handle_read(vault, args)
             if action == "search":

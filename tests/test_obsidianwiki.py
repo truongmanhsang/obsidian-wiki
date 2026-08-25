@@ -98,9 +98,22 @@ def test_mcp_exposes_read_and_write_tools():
     assert {"memory_search", "memory_read", "memory_write", "memory_ingest_submit", "memory_ingest_status"}.issubset(names)
 
 
+def test_mcp_provider_filters_unrecognized_arguments(monkeypatch, tmp_path):
+    mod = _load_module()
+    provider = mod.ObsidianWikiMemoryProvider({"vault_path": str(tmp_path / "vault"), "access_mode": "mcp"})
+    provider.initialize(session_id="test")
+    captured = {}
+    monkeypatch.setattr(provider, "_mcp_call", lambda tool, args: captured.update(tool=tool, args=args) or {"results": []})
+    result = json.loads(provider.handle_tool_call("obsidian_wiki", {
+        "action": "search", "query": "test", "limit": 5, "page": "", "content": "", "note": "", "expected_revision": ""
+    }))
+    assert result == {"results": []}
+    assert captured == {"tool": "memory_search", "args": {"query": "test", "limit": 5}}
+
+
 def test_hermes_provider_uses_shared_store_revision(tmp_path):
     mod = _load_module()
-    provider = mod.ObsidianWikiMemoryProvider({"vault_path": str(tmp_path / "vault")})
+    provider = mod.ObsidianWikiMemoryProvider({"vault_path": str(tmp_path / "vault"), "access_mode": "direct"})
     provider.initialize(session_id="test")
     created = json.loads(provider.handle_tool_call("obsidian_wiki", {
         "action": "write", "page": "concepts/provider", "content": "# Provider\n\nShared write path content.\n"
@@ -133,7 +146,7 @@ def provider(tmp_path):
     if not PLUGIN_DIR.is_dir():
         pytest.skip("obsidianwiki plugin not installed")
     mod = _load_module()
-    p = mod.ObsidianWikiMemoryProvider({"vault_path": str(tmp_path / "v")})
+    p = mod.ObsidianWikiMemoryProvider({"vault_path": str(tmp_path / "v"), "access_mode": "direct"})
     p.initialize(session_id="test")
     return p
 

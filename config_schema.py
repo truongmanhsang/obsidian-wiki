@@ -53,5 +53,21 @@ CONFIG_SCHEMA = ProviderConfigSchema(
             ),
             inline=True,
         ),
+        ProviderField(
+            key="access_mode",
+            label="Access mode",
+            kind=KIND_TEXT,
+            default="mcp",
+            description="Use MCP by default; choose direct only for offline fallback.",
+            choices=("mcp", "direct"),
+            inline=True,
+        ),
+        ProviderField(
+            key="mcp_url",
+            label="MCP URL",
+            kind=KIND_TEXT,
+            default="http://127.0.0.1:8765/mcp",
+            description="Obsidian Wiki Streamable HTTP MCP endpoint.",
+        ),
     ),
 )

@@ -59,6 +59,10 @@ used by Hermes, AGY, Codex, Claude Code, Claude Desktop, Cursor, and other MCP
 clients. Configure the server once, then add a client entry using the transport
 supported by that client.
 
+For the Hermes `obsidianwiki` memory provider, **MCP is the default access mode**
+for wiki reads and writes. The existing direct filesystem adapter remains
+available only as an explicit offline fallback with `access_mode: direct`.
+
 ### Option A: Streamable HTTP — shared server (recommended)
 
 Start one central server on localhost:
