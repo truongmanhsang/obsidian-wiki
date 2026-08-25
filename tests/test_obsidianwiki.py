@@ -56,6 +56,24 @@ def test_mcp_exposes_read_and_write_tools():
     assert {"memory_search", "memory_read", "memory_write"}.issubset(names)
 
 
+def test_hermes_provider_uses_shared_store_revision(tmp_path):
+    mod = _load_module()
+    provider = mod.ObsidianWikiMemoryProvider({"vault_path": str(tmp_path / "vault")})
+    provider.initialize(session_id="test")
+    created = json.loads(provider.handle_tool_call("obsidian_wiki", {
+        "action": "write", "page": "concepts/provider", "content": "# Provider\n\nShared write path content.\n"
+    }))
+    revision = json.loads(provider.handle_tool_call("obsidian_wiki", {
+        "action": "read", "page": "concepts/provider"
+    })) ["revision"]
+    assert created["status"] == "created"
+    stale = json.loads(provider.handle_tool_call("obsidian_wiki", {
+        "action": "write", "page": "concepts/provider", "content": "# Stale\n\nNo overwrite.\n", "expected_revision": "stale"
+    }))
+    assert stale["error"] == "revision_conflict"
+    assert revision
+
+
 def _load_module():
     if str(PLUGIN_DIR) not in sys.path:
         sys.path.insert(0, str(PLUGIN_DIR))

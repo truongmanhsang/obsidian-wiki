@@ -41,10 +41,10 @@ if str(_PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_DIR))
 
 try:  # submodule import when loaded as a package
-    from .obsidian_memory_core import MemoryStore
+    from .obsidian_memory_core import MemoryStore, RevisionConflict
     from .obsidian_memory_core.wiki import WikiVault, WikiVaultError
 except ImportError:  # pragma: no cover - flat import fallback
-    from obsidian_memory_core import MemoryStore  # type: ignore
+    from obsidian_memory_core import MemoryStore, RevisionConflict  # type: ignore
     from obsidian_memory_core.wiki import WikiVault, WikiVaultError  # type: ignore
 
 logger = logging.getLogger(__name__)
@@ -118,6 +118,10 @@ WIKI_TOOL_SCHEMA = {
             "limit": {
                 "type": "integer",
                 "description": "Max results for search/list (default 5).",
+            },
+            "expected_revision": {
+                "type": "string",
+                "description": "SHA-256 revision from read for safe concurrent updates.",
             },
         },
         "required": ["action"],
@@ -376,6 +380,8 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                 tail = vault.log_tail(int(args.get("limit", 30)))
                 return json.dumps({"log_tail": tail})
             return tool_error(f"Unknown action: {action}")
+        except RevisionConflict as e:
+            return json.dumps({"error": "revision_conflict", "message": str(e)})
         except WikiVaultError as e:
             return tool_error(str(e))
         except Exception as e:
@@ -388,10 +394,14 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
         page = args.get("page", "")
         if not page:
             return tool_error("read requires 'page'")
-        path = vault.safe_resolve(page)
-        if path.suffix != ".md":
-            path = path.with_suffix(".md")
-        if not path.exists():
+        try:
+            result = self._store.read(page) if self._store else None
+        except WikiVaultError:
+            result = None
+        if result is None:
+            path = vault.safe_resolve(page)
+            if path.suffix != ".md":
+                path = path.with_suffix(".md")
             import re as _re
 
             norm = lambda s: _re.sub(r"[^a-z0-9]", "", s.lower())
@@ -407,17 +417,7 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
             if close:
                 err["similar"] = close[:8]
             return json.dumps(err)
-        text = path.read_text(encoding="utf-8")
-        truncated = len(text) > 20000
-        vault.append_log("READ", path.name, quiet=True)
-        return json.dumps(
-            {
-                "path": str(path.relative_to(vault.root)),
-                "content": text[:20000],
-                "truncated": truncated,
-            },
-            ensure_ascii=False,
-        )
+        return json.dumps(result, ensure_ascii=False)
 
     def _handle_search(self, vault: WikiVault, args: dict) -> str:
         query = args.get("query", "")
@@ -450,7 +450,11 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
         if not page:
             return tool_error("write requires 'page' (e.g. concepts/my-note)")
         allow_dup = bool(args.get("allow_duplicate") or args.get("allowDuplicate"))
-        result = vault.write_page(page, content, note=args.get("note", ""), allow_duplicate=allow_dup)
+        if self._store is None:
+            self._store = MemoryStore(str(self._config.get("vault_path", _DEFAULT_VAULT)))
+        result = self._store.write(page, content, note=args.get("note", ""),
+                                   expected_revision=args.get("expected_revision"),
+                                   allow_duplicate=allow_dup)
         return json.dumps(result, ensure_ascii=False)
 
 
