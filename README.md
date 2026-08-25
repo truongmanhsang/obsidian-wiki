@@ -248,6 +248,11 @@ worker and sends capture/extraction output through the server-owned vault
 configuration. `wiki_turn_hook.py` is now a thin event client that submits a
 completed-session job instead of writing the vault itself.
 
+Job/request metadata is persisted in the server's local `WIKI_JOB_DB`
+(default: `$HOME/Library/Application Support/obsidian-memory/jobs.db`), so a
+repeated `request_id` remains idempotent after a server restart. Runtime job
+state is deliberately kept outside the iCloud vault.
+
 For this mode, replace the hook command in every profile with the same hook
 and set `OBSIDIAN_MEMORY_MCP_URL` if the server uses another local endpoint:
 
