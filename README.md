@@ -1,6 +1,6 @@
 # obsidianwiki
 
-![Obsidian agent-vault graph](assets/agent-vault-graph.jpg)
+![Obsidian agent-vault graph](assets/agent-vault-graph.png)
 
 *Obsidian graph view of the `agent-vault` knowledge base.*
 
