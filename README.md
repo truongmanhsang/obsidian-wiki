@@ -52,6 +52,114 @@ hermes memory status   # verify
 
 Restart the session/gateway after switching providers.
 
+## Configure MCP clients
+
+The Obsidian Wiki MCP server is a standalone MCP server. The same server can be
+used by Hermes, AGY, Codex, Claude Code, Claude Desktop, Cursor, and other MCP
+clients. Configure the server once, then add a client entry using the transport
+supported by that client.
+
+### Option A: Streamable HTTP — shared server (recommended)
+
+Start one central server on localhost:
+
+```bash
+OBSIDIAN_VAULT_PATH="/absolute/path/to/agent-vault" \\
+  .venv/bin/fastmcp run mcp_server.py:mcp \\
+  --transport http --host 127.0.0.1 --port 8765
+```
+
+Configure clients that support Streamable HTTP with this endpoint:
+
+```text
+http://127.0.0.1:8765/mcp
+```
+
+**Hermes** — add to `~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  obsidian_wiki:
+    url: "http://127.0.0.1:8765/mcp"
+    timeout: 120
+    connect_timeout: 10
+```
+
+**AGY** — register it with the AGY CLI:
+
+```bash
+agy mcp add obsidian_wiki http://127.0.0.1:8765/mcp
+agy mcp list
+```
+
+**Codex / Claude Code / Claude Desktop / Cursor** — add an HTTP MCP server
+entry using the configuration format and file location documented by the
+client. A typical logical configuration is:
+
+```json
+{
+  "mcpServers": {
+    "obsidian_wiki": {
+      "url": "http://127.0.0.1:8765/mcp"
+    }
+  }
+}
+```
+
+### Option B: stdio — one client-owned server process
+
+For clients that prefer stdio, configure the Python entry point directly. Use
+absolute paths and pass the vault path explicitly:
+
+```json
+{
+  "mcpServers": {
+    "obsidian_wiki": {
+      "command": "/absolute/path/to/obsidian-wiki/.venv/bin/python",
+      "args": ["/absolute/path/to/obsidian-wiki/mcp_server.py"],
+      "env": {
+        "OBSIDIAN_VAULT_PATH": "/absolute/path/to/agent-vault"
+      }
+    }
+  }
+}
+```
+
+This JSON shape is commonly used by Codex, Claude Code, Claude Desktop, and
+Cursor, but the exact config file location and supported transport vary by
+client. For AGY, use its CLI instead:
+
+```bash
+agy mcp add obsidian_wiki \\
+  /absolute/path/to/obsidian-wiki/.venv/bin/python \\
+  /absolute/path/to/obsidian-wiki/mcp_server.py
+agy mcp list
+```
+
+### Verify and use the connection
+
+Restart the client after changing its MCP configuration. Ask it to list or use
+`memory_search`, `memory_read`, `memory_list`, `memory_lint`, `memory_log`, and
+`memory_write`.
+
+Useful checks:
+
+```bash
+# AGY
+agy mcp list
+
+# Hermes
+hermes mcp list
+
+# Inspect the server implementation
+.venv/bin/fastmcp inspect mcp_server.py:mcp
+```
+
+If a client cannot connect, verify that the server is running, the endpoint is
+`127.0.0.1:8765`, the vault path is absolute and correct, and the client was
+restarted after configuration changes. Keep the server bound to localhost
+unless authentication and network exposure are deliberately configured.
+
 ## Scripts and session ingest
 
 The `scripts/` directory contains both automatic Hermes integration and
