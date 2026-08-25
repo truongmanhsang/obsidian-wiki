@@ -38,25 +38,28 @@ class MemoryStore:
             try:
                 import fcntl
                 fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-            except ImportError:
-                pass
+            except ImportError as exc:
+                raise MemoryWriteError("exclusive file locking is unavailable on this platform") from exc
             try:
                 yield
             finally:
-                try:
-                    import fcntl
-                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-                except ImportError:
-                    pass
+                import fcntl
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
     def _page_path(self, page: str) -> Path:
         path = self.vault.safe_resolve(page)
         if path.suffix != ".md":
             path = path.with_suffix(".md")
+        relative = path.relative_to(self.root)
+        allowed = {"entities", "people", "decisions", "environment", "concepts", "answers", "preferences"}
+        if len(relative.parts) < 2 or relative.parts[0] not in allowed:
+            raise MemoryWriteError("only wiki pages in an allowed content folder are accessible")
         return path
 
     def _revision(self, page: str) -> str | None:
-        path = self._page_path(page)
+        path = self.vault.safe_resolve(page)
+        if path.suffix != ".md":
+            path = path.with_suffix(".md")
         if not path.exists():
             return None
         return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -68,11 +71,12 @@ class MemoryStore:
         if not path.exists():
             raise MemoryWriteError(f"page not found: {page}")
         text = path.read_text(encoding="utf-8")
+        revision = hashlib.sha256(path.read_bytes()).hexdigest()
         return {
             "path": str(path.relative_to(self.root)),
             "content": text[:20000],
             "truncated": len(text) > 20000,
-            "revision": hashlib.sha256(text.encode()).hexdigest(),
+            "revision": revision,
         }
 
     def search(self, query: str, limit: int = 5) -> dict[str, Any]:
@@ -97,8 +101,12 @@ class MemoryStore:
             raise MemoryWriteError("write requires a page")
         if not isinstance(content, str) or not content.strip():
             raise MemoryWriteError("write requires non-empty content")
+        if page.split('/', 1)[0] == 'sources':
+            raise MemoryWriteError('sources/ is read-only')
         with self._write_lock():
             current = self._revision(page)
+            if current is not None and expected_revision is None:
+                raise RevisionConflict(f"expected_revision is required when updating {page}")
             if expected_revision is not None and current != expected_revision:
                 raise RevisionConflict(f"revision conflict for {page}; read the page again before updating")
             result = self.vault.write_page(page, content, note=note, allow_duplicate=allow_duplicate)

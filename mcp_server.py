@@ -19,13 +19,14 @@ from obsidian_memory_core import MemoryStore, RevisionConflict
 mcp = FastMCP("obsidian-memory")
 
 
-def _store() -> MemoryStore:
+def _store(prepare: bool = False) -> MemoryStore:
     path = os.environ.get(
         "OBSIDIAN_VAULT_PATH",
         os.path.expanduser("~/Library/Mobile Documents/iCloud~md~obsidian/Documents/agent-vault"),
     )
     store = MemoryStore(path)
-    store.ensure_ready()
+    if prepare:
+        store.ensure_ready()
     return store
 
 
@@ -74,7 +75,7 @@ def memory_write(
     changes. Never store credentials, API keys, tokens, or passwords.
     """
     try:
-        return _store().write(page, content, note, expected_revision, allow_duplicate)
+        return _store(prepare=True).write(page, content, note, expected_revision, allow_duplicate)
     except RevisionConflict as exc:
         return {"error": "revision_conflict", "message": str(exc)}
 

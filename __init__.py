@@ -402,6 +402,10 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
             path = vault.safe_resolve(page)
             if path.suffix != ".md":
                 path = path.with_suffix(".md")
+            relative = path.relative_to(vault.root)
+            allowed = {"entities", "people", "decisions", "environment", "concepts", "answers", "preferences"}
+            if len(relative.parts) < 2 or relative.parts[0] not in allowed:
+                return tool_error("only wiki pages in an allowed content folder are accessible")
             import re as _re
 
             norm = lambda s: _re.sub(r"[^a-z0-9]", "", s.lower())

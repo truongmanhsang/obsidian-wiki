@@ -140,8 +140,9 @@ class TestWritePath:
     def test_update_stamps_new_date(self, provider):
         _call(provider, action="write", page="entities/a1",
               content="# A1\n\nfirst body\n")
+        revision = _call(provider, action="read", page="entities/a1")["revision"]
         _call(provider, action="write", page="entities/a1",
-              content="# A1\n\nsecond body\n")
+              content="# A1\n\nsecond body\n", expected_revision=revision)
         r = _call(provider, action="read", page="entities/a1")
         assert r["content"].count("updated: 20") == 1
         assert "second body" in r["content"]
