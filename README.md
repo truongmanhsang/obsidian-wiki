@@ -48,6 +48,157 @@ hermes memory status   # verify
 
 Restart the session/gateway after switching providers.
 
+## Scripts and session ingest
+
+The `scripts/` directory contains both automatic Hermes integration and
+optional manual utilities. Files in this directory do **not** run merely by
+being present; they run only when Hermes, a cron job, or the operator invokes
+them.
+
+| Script | Purpose | Automatic? | Requires Hermes? |
+|--------|---------|------------|------------------|
+| `wiki_turn_hook.py` | Hermes `on_session_end` hook; captures the completed session and launches extraction in the background | Yes, when the hook is configured | Yes |
+| `wiki_session_capture.py` | Exports user/assistant dialogue from Hermes `state.db` into `sources/sessions/` | No, unless called by the hook | Reads Hermes `state.db` by default |
+| `wiki_session_extract.py` | Sends selected source transcripts to the auxiliary LLM and merges durable knowledge into curated pages | No, unless called by the hook | Uses Hermes auxiliary runtime by default |
+| `wiki_backlog_extract.py` | Processes all pending session sources one at a time with resumable state | No | Uses Hermes runtime by default |
+| `wiki_backlog_status.py` | Displays backlog progress, runner status, ETA, and curated page count | No | No, but reads local Hermes paths by default |
+| `wiki_ingest.sh` | Convenience wrapper: capture sessions, then extract knowledge | No | Yes for its default capture/extract paths |
+
+### Automatic flow through Hermes
+
+When the `on_session_end` shell hook is configured, the flow is:
+
+```text
+Hermes reports a completed session
+              |
+              v
+       wiki_turn_hook.py
+              |
+              +--> wiki_session_capture.py
+              |
+              +--> wiki_session_extract.py --apply (background)
+                              |
+                              v
+                         agent-vault
+```
+
+`wiki_turn_hook.py` is invoked after a **completed session**, not after every
+individual chat turn. It skips cron sessions and exits successfully on errors
+so memory ingestion cannot break the main agent response.
+
+The hook is configured in Hermes `config.yaml` as an `on_session_end` command,
+for example:
+
+```yaml
+hooks:
+  on_session_end:
+    - command: python3 /path/to/obsidianwiki/scripts/wiki_turn_hook.py
+```
+
+The hook is not enabled merely by installing this repository. It must be
+registered in the Hermes configuration and the gateway/session process may
+need a restart after configuration changes.
+
+Disable the automatic hook temporarily with:
+
+```bash
+export WIKI_INGEST_DISABLE=1
+```
+
+For a persistent gateway setup, define the variable in the environment used by
+the gateway. `WIKI_INGEST_DISABLE` prevents capture and extraction from the
+hook, but does not disable scripts that the operator runs manually.
+
+### Manual session pipeline
+
+The manual pipeline is useful for reprocessing, debugging, or standalone
+maintenance. Resolve the vault path explicitly when it is not the default:
+
+```bash
+export OBSIDIAN_VAULT_PATH="/absolute/path/to/agent-vault"
+export HERMES_STATE_DB="$HOME/.hermes/state.db"
+```
+
+Capture one session:
+
+```bash
+python3 scripts/wiki_session_capture.py \
+  --session <session-id> \
+  --min-chars 300 \
+  --force
+```
+
+Extract one captured source. The selector is relative to
+`sources/sessions/`:
+
+```bash
+$HOME/.hermes/hermes-agent/venv/bin/python \
+  scripts/wiki_session_extract.py \
+  --sessions YYYY/MM/DD/<session-id>.md \
+  --apply
+```
+
+Run the convenience wrapper:
+
+```bash
+bash scripts/wiki_ingest.sh
+```
+
+The wrapper captures uncaptured sessions and then extracts the newest pending
+sources. It is not automatically scheduled by this repository.
+
+### Backlog processing
+
+For a large backlog, use the resumable extractor. It stores progress in
+`$WIKI_BACKLOG_STATE`, defaulting to `$HOME/.hermes/cache/wiki-backlog-state.json`:
+
+```bash
+OBSIDIAN_VAULT_PATH="/absolute/path/to/agent-vault" \
+  HERMES_PYTHON="$HOME/.hermes/hermes-agent/venv/bin/python" \
+  python3 scripts/wiki_backlog_extract.py
+```
+
+Check progress:
+
+```bash
+OBSIDIAN_VAULT_PATH="/absolute/path/to/agent-vault" \
+  python3 scripts/wiki_backlog_status.py
+```
+
+The backlog extractor skips cron sessions, processes one source at a time,
+records `pending`, `success`, `skip`, or `fail`, and resumes from its state
+file after interruption. The status script is informational only; it does
+not start or stop the extractor.
+
+### Logs and extraction status
+
+- Detailed extraction audit: `WIKI_AUDIT_LOG`, default
+  `$HOME/.hermes/logs/wiki-extract-audit.jsonl`
+- Background hook logs: `$HOME/.hermes/logs/wiki-extract-<session-id>.log`
+- Backlog state: `WIKI_BACKLOG_STATE`, default
+  `$HOME/.hermes/cache/wiki-backlog-state.json`
+- Source frontmatter: `extract_status: pending|success|skip|fail`
+
+Do not commit these runtime files. The repository `.gitignore` excludes local
+state, logs, caches, environment files, lock files, SQLite logs, and build
+artifacts.
+
+### What is and is not automatic
+
+| Operation | Automatic by the Hermes plugin? | Manual command available? |
+|-----------|----------------------------------|---------------------------|
+| Capture a completed Hermes session | Yes, when `on_session_end` is configured | Yes |
+| Extract durable knowledge | Yes, after the hook captures a completed session | Yes |
+| Process an old backlog | No | Yes, `wiki_backlog_extract.py` |
+| Show backlog status | No | Yes, `wiki_backlog_status.py` |
+| Run the full wrapper | No | Yes, `wiki_ingest.sh` |
+| MCP read/write memory | No session capture; MCP exposes memory operations only | Yes, through any MCP client |
+
+The plugin captures and extracts Hermes sessions only through the configured
+hook. The standalone MCP server does not capture Hermes conversations; it
+provides memory read/search/list/lint/log/write operations for Codex, Claude
+Code, AGY, and other MCP clients.
+
 ## Session ingest pipeline
 
 The plugin captures completed user/assistant sessions into
