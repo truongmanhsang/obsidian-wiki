@@ -93,7 +93,12 @@ class IngestJobManager:
             first = subprocess.run(capture, capture_output=True, text=True, timeout=120, env=env)
             if first.returncode != 0:
                 raise RuntimeError((first.stderr or first.stdout or "capture failed")[-1000:])
+            # Extract only the session captured by this job. Without the
+            # selector, the extractor scans the newest uncaptured sources and
+            # can accidentally mine unrelated short/small-talk sessions.
             extract = [sys.executable, str(scripts / "wiki_session_extract.py"), "--apply"]
+            if job.get("session_id"):
+                extract += ["--sessions", str(job["session_id"])]
             second = subprocess.run(extract, capture_output=True, text=True, timeout=900, env=env)
             if second.returncode != 0:
                 raise RuntimeError((second.stderr or second.stdout or "extract failed")[-1000:])

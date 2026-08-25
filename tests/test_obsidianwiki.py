@@ -40,7 +40,49 @@ def test_shared_core_write_revision_and_lock(tmp_path):
         store.write("concepts/shared-core", "# Stale\n\nRejected stale update.\n", expected_revision=revision)
 
 
-def test_shared_core_rejects_source_write(tmp_path):
+def test_capture_measures_dialogue_not_markdown_metadata():
+    hook_path = PLUGIN_DIR / "scripts" / "wiki_session_capture.py"
+    spec = importlib.util.spec_from_file_location("wiki_session_capture_under_test", hook_path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["wiki_session_capture_under_test"] = mod
+    spec.loader.exec_module(mod)
+
+    class Result:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+        def fetchone(self):
+            return self.rows[0] if self.rows else None
+
+    class Cursor:
+        def execute(self, query, params):
+            if "FROM messages" in query:
+                return Result([("user", "hello", "2026-08-25")])
+            return Result([("Friendly greeting #29", "1787635072.919327")])
+
+    result = mod.export_session(Cursor(), "session-id")
+    assert result is not None
+    markdown, turns, dialogue = result
+    assert turns == 1
+    assert dialogue == len("hello")
+    assert len(markdown) > dialogue
+
+
+def test_extract_dialogue_filter_ignores_short_source(tmp_path):
+    script = PLUGIN_DIR / "scripts" / "wiki_session_extract.py"
+    spec = importlib.util.spec_from_file_location("wiki_session_extract_filter_test", script)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["wiki_session_extract_filter_test"] = mod
+    spec.loader.exec_module(mod)
+
+    source = "---\ntype: source\n---\n\n# Session hello\n\n## Sang\n\nhello\n\n## Bông\n\nChào anh Sang 👋\n"
+    assert mod.dialogue_chars(source) < mod.MIN_DIALOGUE_CHARS
+
+
+def test_shared_core_rejects_source_write_again(tmp_path):
     from obsidian_memory_core import MemoryStore
 
     store = MemoryStore(tmp_path / "vault")
@@ -236,6 +278,8 @@ class TestLifecycle:
         block = provider.system_prompt_block()
         assert "# Obsidian Wiki Memory" in block
         assert "Cat" in block
+        assert "must never be edited with filesystem tools" in block
+        assert "mcp__obsidian_wiki__memory_write" in block
 
     def test_skeleton_created_on_demand(self, provider, tmp_path):
         v = provider._get_vault()

@@ -275,8 +275,16 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                 "recommendation, alternatives, and sources.",
                 "- Never store passwords, API keys, tokens, or other secrets in "
                 "the wiki. Run action=lint when checking vault health.",
-                "Use the obsidian_wiki tool:",
-                "- action=search, read, list, write, lint, or log as appropriate",
+                "- Use the obsidian_wiki tool:",
+                "- action=search, read, list, write, lint, or log as appropriate.",
+                "- Wiki content under the configured vault must never be edited "
+                "with filesystem tools such as patch, write_file, or terminal.",
+                "- For wiki pages, use obsidian_wiki action=write or the "
+                "mcp__obsidian_wiki__memory_write tool.",
+                "- Before updating an existing wiki page, read it first and "
+                "pass its expected_revision.",
+                "- Files outside the vault, including plugin source code, README, "
+                "scripts, and config, may still be edited with filesystem tools.",
             ]
             if str(self._config.get("inject_index_on_start", "true")).lower() in (
                 "1", "true", "yes",

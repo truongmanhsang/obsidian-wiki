@@ -78,17 +78,24 @@ Hermes reports a completed session
               v
        wiki_turn_hook.py
               |
-              +--> wiki_session_capture.py
-              |
-              +--> wiki_session_extract.py --apply (background)
+              +--> MCP memory_ingest_submit
+                              |
+                              v
+                    central memory server
+                              |
+                              +--> capture
+                              +--> extract/dedup
+                              +--> write curated pages
                               |
                               v
                          agent-vault
 ```
 
 `wiki_turn_hook.py` is invoked after a **completed session**, not after every
-individual chat turn. It skips cron sessions and exits successfully on errors
-so memory ingestion cannot break the main agent response.
+individual chat turn. It submits an idempotent ingest request to the local
+Obsidian Memory MCP server; the server owns capture, extraction, deduplication,
+locking, and vault writes. It skips cron sessions and exits successfully on
+errors so memory ingestion cannot break the main agent response.
 
 The hook is configured in Hermes `config.yaml` as an `on_session_end` command,
 for example:
@@ -191,17 +198,19 @@ artifacts.
 
 | Operation | Automatic by the Hermes plugin? | Manual command available? |
 |-----------|----------------------------------|---------------------------|
-| Capture a completed Hermes session | Yes, when `on_session_end` is configured | Yes |
-| Extract durable knowledge | Yes, after the hook captures a completed session | Yes |
-| Process an old backlog | No | Yes, `wiki_backlog_extract.py` |
-| Show backlog status | No | Yes, `wiki_backlog_status.py` |
+| Capture a completed Hermes session | Yes, via the configured hook and MCP ingest server | Yes |
+| Extract durable knowledge | Yes, via the MCP ingest worker after hook submission | Yes |
+| Process an old backlog | No | Yes, `wiki_backlog_extract.py` or MCP ingest |
+| Show backlog status | No | Yes, `wiki_backlog_status.py` or `memory_ingest_status` |
 | Run the full wrapper | No | Yes, `wiki_ingest.sh` |
-| MCP read/write memory | No session capture; MCP exposes memory operations only | Yes, through any MCP client |
+| MCP read/write memory | No passive capture; MCP exposes memory operations and ingest tools | Yes, through any MCP client |
 
-The plugin captures and extracts Hermes sessions only through the configured
-hook. The standalone MCP server does not capture Hermes conversations; it
-provides memory read/search/list/lint/log/write operations for Codex, Claude
-Code, AGY, and other MCP clients.
+The plugin integrates completed Hermes sessions only through the configured
+hook. The hook is a thin MCP client and does not write the vault itself. The
+standalone MCP server does not passively listen for Hermes conversations; it
+processes sessions when the hook submits `memory_ingest_submit`, and provides
+memory read/search/list/lint/log/write operations for Codex, Claude Code, AGY,
+and other MCP clients.
 
 ### Central server mode for multiple Hermes profiles
 
@@ -234,7 +243,7 @@ Configure each Hermes profile with the same endpoint:
 
 ```yaml
 mcp_servers:
-  obsidian-memory:
+  obsidian_wiki:
     url: "http://127.0.0.1:8765/mcp"
     timeout: 120
     connect_timeout: 10
@@ -489,9 +498,9 @@ obsidian_memory_core
 
 The MCP adapter supports `memory_search`, `memory_read`, `memory_list`,
 `memory_lint`, `memory_log`, `memory_write`, `memory_ingest_submit`, and
-`memory_ingest_status`. Ingest jobs are serialized by one central worker;
-writes use an exclusive lock and safe vault paths, and an optional
-`expected_revision` SHA-256 check to reject stale updates from concurrent
+`memory_ingest_status` (8 tools). Ingest jobs are serialized by one central
+worker; writes use an exclusive lock and require an `expected_revision` SHA-256
+check when updating an existing page, rejecting stale updates from concurrent
 agents. Never store credentials, API keys,
 tokens, or passwords in the vault.
 
@@ -509,8 +518,10 @@ fastmcp run mcp_server.py:mcp --transport http --host 127.0.0.1 --port 8000
 ```
 
 The Hermes plugin currently retains its native compatibility surface while
-sharing the vault implementation. The next cleanup can move the remaining
-Hermes-specific façade methods onto `MemoryStore` without changing clients.
+sharing the vault implementation. Normal provider recall and writes remain
+local/direct through the shared `MemoryStore`; only completed-session ingest is
+routed through MCP. This keeps per-turn memory fast while giving the central
+server ownership of the asynchronous ingest pipeline.
 
 ### Standalone use without Hermes
 
@@ -545,8 +556,13 @@ Expected result includes:
 
 ```text
 Server:  obsidian-memory
-Tools:  6
+Tools:  8
 ```
+
+The internal FastMCP server name remains `obsidian-memory`; the MCP client
+configuration key may be `obsidian_wiki`. Hermes uses that client key when
+prefixing discovered tools, so the configured Hermes tools appear as
+`mcp__obsidian_wiki__memory_read`, `mcp__obsidian_wiki__memory_write`, and so on.
 
 ### Configure the vault path
 
@@ -585,7 +601,7 @@ load the same shell `PATH` as Terminal:
 ```json
 {
   "mcpServers": {
-    "obsidian-memory": {
+    "obsidian_wiki": {
       "command": "/absolute/path/to/obsidian-wiki/.venv/bin/python",
       "args": [
         "/absolute/path/to/obsidian-wiki/mcp_server.py"
@@ -604,7 +620,7 @@ script available, the command can instead be:
 ```json
 {
   "mcpServers": {
-    "obsidian-memory": {
+    "obsidian_wiki": {
       "command": "/absolute/path/to/obsidian-wiki/.venv/bin/obsidian-memory-mcp",
       "env": {
         "OBSIDIAN_VAULT_PATH": "/absolute/path/to/agent-vault"
@@ -621,12 +637,14 @@ list the available MCP tools; it should discover `memory_search`,
 ### Claude Code, Claude Desktop, Cursor, and AGY
 
 Use the same MCP server command and environment. The exact configuration file
-location differs by client, but the logical configuration is the same:
+location differs by client, but the logical configuration is the same. The
+server key is conventionally `obsidian_wiki`; Hermes prefixes discovered tools
+with `mcp__obsidian_wiki__` (for example, `mcp__obsidian_wiki__memory_read`).
 
 ```json
 {
   "mcpServers": {
-    "obsidian-memory": {
+    "obsidian_wiki": {
       "command": "/absolute/path/to/obsidian-wiki/.venv/bin/python",
       "args": ["/absolute/path/to/obsidian-wiki/mcp_server.py"],
       "env": {
@@ -650,7 +668,9 @@ possible.
 | `memory_list` | optional `limit` | Return catalog, types, and statistics |
 | `memory_lint` | none | Check links, orphans, and wiki health |
 | `memory_log` | optional `limit` | Return recent operation logs |
-| `memory_write` | `page`, `content`, optional `note`, `expected_revision` | Create or safely update a page |
+| `memory_write` | `page`, `content`, optional `note`, `expected_revision` | Create or safely update a page; use read-then-write for existing pages |
+| `memory_ingest_submit` | optional `request_id`, `session_id` | Queue centralized session capture/extraction |
+| `memory_ingest_status` | optional `job_id` | Inspect an ingest job or recent jobs |
 
 ### Safe write workflow
 

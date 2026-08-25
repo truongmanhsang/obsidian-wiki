@@ -47,7 +47,7 @@ def clean_content(text: str) -> str:
     return text.strip()
 
 
-def export_session(cur, session_id: str) -> tuple[str, int] | None:
+def export_session(cur, session_id: str) -> tuple[str, int, int] | None:
     """Return (markdown, n_turns) for one session, or None if empty."""
     rows = cur.execute(
         "SELECT role, content, timestamp FROM messages "
@@ -81,6 +81,7 @@ def export_session(cur, session_id: str) -> tuple[str, int] | None:
         parts.append("")
 
     n_turns = 0
+    dialogue_chars = 0
     for role, content, ts in rows:
         text = clean_content(content or "")
         if len(text) < 1:
@@ -92,9 +93,10 @@ def export_session(cur, session_id: str) -> tuple[str, int] | None:
         parts.append(text)
         parts.append("")
         n_turns += 1
+        dialogue_chars += len(text)
     if n_turns == 0:
         return None
-    return "\n".join(parts), n_turns
+    return "\n".join(parts), n_turns, dialogue_chars
 
 
 def ensure_extract_status(path: Path, status: str = "pending") -> None:
@@ -173,9 +175,10 @@ def main() -> int:
         if result is None:
             skipped_small += 1
             continue
-        markdown, n_turns = result
-        body_chars = len(markdown)
-        if body_chars < args.min_chars:
+        markdown, n_turns, dialogue_chars = result
+        # Measure human dialogue only; YAML, headings, and timestamps must not
+        # make a greeting-sized session eligible for extraction.
+        if dialogue_chars < args.min_chars:
             skipped_small += 1
             continue
         vault.write_page(
@@ -185,7 +188,7 @@ def main() -> int:
             allow_source=True,
         )
         ensure_extract_status(target)
-        captured.append((dated_rel(sid), n_turns, body_chars))
+        captured.append((dated_rel(sid), n_turns, dialogue_chars))
 
     conn.close()
     print(json.dumps({

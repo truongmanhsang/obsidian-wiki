@@ -62,6 +62,7 @@ Rules:
 
 MAX_SOURCE_CHARS = 24000      # per session fed to the LLM
 MAX_PAGE_CHARS = 3000         # per candidate page shown for merge context
+MIN_DIALOGUE_CHARS = 200      # ignore greetings/small talk even when called directly
 AUDIT_LOG = Path(os.environ.get("WIKI_AUDIT_LOG", str(Path.home() / ".hermes" / "logs" / "wiki-extract-audit.jsonl")))
 
 
@@ -117,6 +118,17 @@ def build_user_input(source_texts: list[str], candidates: list[dict]) -> str:
         parts.append("\n--- transcript ---")
         parts.append(st[:MAX_SOURCE_CHARS])
     return "\n".join(parts)
+
+
+def dialogue_chars(text: str) -> int:
+    """Count transcript dialogue, excluding frontmatter and extraction report."""
+    parts = text.split("---", 2)
+    body = parts[2] if len(parts) >= 3 else text
+    body = re.split(r"\n## LLM Extraction\n", body, maxsplit=1)[0]
+    body = re.sub(r"(?m)^# Session.*$", "", body)
+    body = re.sub(r"(?m)^> Started:.*$", "", body)
+    body = re.sub(r"(?m)^## (?:Sang|Bông)(?: \([^\n]*\))?\s*$", "", body)
+    return len(body.strip())
 
 
 def parse_proposals(raw: str) -> list[dict]:
@@ -295,6 +307,12 @@ def main() -> int:
         for s in args.sessions:
             rel = Path(s if s.endswith(".md") else f"{s}.md")
             candidate = (sess_root / rel).resolve()
+            # Jobs submit a session ID, while captured sources live below a
+            # YYYY/MM/DD tree. Accept both a relative source path and a bare
+            # session ID without falling back to unrelated newest sources.
+            if not candidate.is_file():
+                matches = list(sess_root.rglob(rel.name))
+                candidate = matches[0].resolve() if len(matches) == 1 else candidate
             if candidate.is_file() and sess_root.resolve() in candidate.parents:
                 hits.append(candidate)
         src_paths = list(dict.fromkeys(hits))
@@ -312,9 +330,27 @@ def main() -> int:
         return 0
 
     sources = []
+    skipped_small = []
     for p in src_paths:
         text = p.read_text(encoding="utf-8")
+        if dialogue_chars(text) < MIN_DIALOGUE_CHARS:
+            skipped_small.append(p)
+            continue
         sources.append({"path": p, "text": text})
+    if skipped_small:
+        audit("sources_skipped_small", run_id=run_id,
+              sessions=[p.stem for p in skipped_small],
+              min_dialogue_chars=MIN_DIALOGUE_CHARS)
+        if args.apply:
+            for p in skipped_small:
+                update_extract_status(p, "skip")
+    if not sources:
+        audit("nothing_durable_to_extract", run_id=run_id,
+              sessions=[p.stem for p in src_paths],
+              min_dialogue_chars=MIN_DIALOGUE_CHARS)
+        print(json.dumps({"status": "skipped-too-small", "run_id": run_id,
+                          "skipped": [p.stem for p in skipped_small]}))
+        return 0
     joined_len = sum(len(s["text"]) for s in sources)
     audit("extract_started", run_id=run_id, sessions=[p.stem for p in src_paths], source_chars=joined_len)
 
@@ -373,8 +409,8 @@ def main() -> int:
         failed = [x for x in applied if x.get("status") == "error"]
         extract_status = "fail" if failed else ("success" if successful else "skip")
         report["extract_status"] = extract_status
-        for p in src_paths:
-            update_extract_status(p, extract_status, report)
+        for source in sources:
+            update_extract_status(source["path"], extract_status, report)
         vault.append_log(
             "REFLECT",
             f"extract from {len(src_paths)} session(s): "
