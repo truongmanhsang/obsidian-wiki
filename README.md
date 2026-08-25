@@ -1,5 +1,9 @@
 # obsidianwiki
 
+![Obsidian agent-vault graph](assets/agent-vault-graph.jpg)
+
+*Obsidian graph view of the `agent-vault` knowledge base.*
+
 Hermes memory provider backed by an **Obsidian wiki vault** - the LLM-wiki
 pattern (Karpathy-style) as a first-class `MemoryProvider`.
 
