@@ -14,9 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastmcp import FastMCP
 
-from obsidian_memory_core import MemoryStore, RevisionConflict
+from obsidian_memory_core import IngestJobManager, MemoryStore, RevisionConflict
 
 mcp = FastMCP("obsidian-memory")
+_manager: IngestJobManager | None = None
 
 
 def _store(prepare: bool = False) -> MemoryStore:
@@ -28,6 +29,13 @@ def _store(prepare: bool = False) -> MemoryStore:
     if prepare:
         store.ensure_ready()
     return store
+
+
+def _ingest_manager() -> IngestJobManager:
+    global _manager
+    if _manager is None:
+        _manager = IngestJobManager(_store(prepare=True))
+    return _manager
 
 
 @mcp.tool()
@@ -78,6 +86,18 @@ def memory_write(
         return _store(prepare=True).write(page, content, note, expected_revision, allow_duplicate)
     except RevisionConflict as exc:
         return {"error": "revision_conflict", "message": str(exc)}
+
+
+@mcp.tool()
+def memory_ingest_submit(request_id: str | None = None, session_id: str | None = None) -> dict[str, Any]:
+    """Queue centralized session capture and extraction; safe to retry with request_id."""
+    return _ingest_manager().submit(request_id=request_id, session_id=session_id)
+
+
+@mcp.tool()
+def memory_ingest_status(job_id: str | None = None) -> dict[str, Any]:
+    """Return the status of one ingest job or recent centralized ingest jobs."""
+    return _ingest_manager().status(job_id)
 
 
 def main() -> None:

@@ -17,3 +17,4 @@ py-modules = ["mcp_server"]
 
 [project.scripts]
 obsidian-memory-mcp = "mcp_server:main"
+obsidian-memory-ingest-submit = "scripts.wiki_ingest_submit:main"

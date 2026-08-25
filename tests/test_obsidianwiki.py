@@ -53,7 +53,7 @@ def test_mcp_exposes_read_and_write_tools():
     from mcp_server import mcp
 
     names = {tool.name for tool in asyncio.run(mcp.list_tools())}
-    assert {"memory_search", "memory_read", "memory_write"}.issubset(names)
+    assert {"memory_search", "memory_read", "memory_write", "memory_ingest_submit", "memory_ingest_status"}.issubset(names)
 
 
 def test_hermes_provider_uses_shared_store_revision(tmp_path):
@@ -255,8 +255,9 @@ class TestSessionExtractReport:
         mod = importlib.util.module_from_spec(spec)
         sys.modules["wiki_turn_hook_under_test"] = mod
         spec.loader.exec_module(mod)
-        assert "/" not in mod.safe_session_filename("../../outside/x")
-        assert mod.safe_session_filename("") == "adhoc"
+        # The central hook is now an MCP event client; it no longer builds log filenames.
+        assert hasattr(mod, "submit")
+        assert hasattr(mod, "main")
 
     def test_report_is_written_at_end_of_session_note(self, tmp_path):
         script_dir = PLUGIN_DIR / "scripts"

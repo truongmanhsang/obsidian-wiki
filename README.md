@@ -203,6 +203,66 @@ hook. The standalone MCP server does not capture Hermes conversations; it
 provides memory read/search/list/lint/log/write operations for Codex, Claude
 Code, AGY, and other MCP clients.
 
+### Central server mode for multiple Hermes profiles
+
+When several Hermes profiles share one vault, run one long-lived MCP server
+and configure every profile as an HTTP MCP client. Do not start one stdio
+server per profile against the same vault.
+
+```text
+Hermes profile A ─┐
+Hermes profile B ─┼── http://127.0.0.1:8765/mcp
+Hermes profile C ─┘             │
+                               ▼
+                    one obsidian-memory server
+                               │
+                    central ingest job worker
+                               │
+                               ▼
+                         agent-vault
+```
+
+Start the central server once:
+
+```bash
+OBSIDIAN_VAULT_PATH="/absolute/path/to/agent-vault" \
+  .venv/bin/fastmcp run mcp_server.py:mcp \
+  --transport http --host 127.0.0.1 --port 8765
+```
+
+Configure each Hermes profile with the same endpoint:
+
+```yaml
+mcp_servers:
+  obsidian-memory:
+    url: "http://127.0.0.1:8765/mcp"
+    timeout: 120
+    connect_timeout: 10
+```
+
+The server exposes `memory_ingest_submit` and `memory_ingest_status` in
+addition to the memory read/write tools. `memory_ingest_submit` accepts an
+optional `request_id`; retrying the same request ID returns the original job
+instead of creating a duplicate. The server serializes ingest jobs in one
+worker and sends capture/extraction output through the server-owned vault
+configuration. `wiki_turn_hook.py` is now a thin event client that submits a
+completed-session job instead of writing the vault itself.
+
+For this mode, replace the hook command in every profile with the same hook
+and set `OBSIDIAN_MEMORY_MCP_URL` if the server uses another local endpoint:
+
+```yaml
+hooks:
+  on_session_end:
+    - command: python3 /path/to/obsidianwiki/scripts/wiki_turn_hook.py
+```
+
+Use `scripts/wiki_ingest_submit.py` or `bash scripts/wiki_ingest.sh` to queue
+a manual ingest job. Use `memory_ingest_status` to monitor it. Do not run the
+old capture/extraction scripts directly while the central server is active;
+they remain available for compatibility and diagnostics, but direct execution
+can bypass the central job queue.
+
 ## Session ingest pipeline
 
 The plugin captures completed user/assistant sessions into
@@ -320,9 +380,11 @@ obsidian_memory_core
 ```
 
 The MCP adapter supports `memory_search`, `memory_read`, `memory_list`,
-`memory_lint`, `memory_log`, and `memory_write`. Writes use an exclusive lock,
-safe vault paths, and an optional `expected_revision` SHA-256 check to reject
-stale updates from concurrent agents. Never store credentials, API keys,
+`memory_lint`, `memory_log`, `memory_write`, `memory_ingest_submit`, and
+`memory_ingest_status`. Ingest jobs are serialized by one central worker;
+writes use an exclusive lock and safe vault paths, and an optional
+`expected_revision` SHA-256 check to reject stale updates from concurrent
+agents. Never store credentials, API keys,
 tokens, or passwords in the vault.
 
 Run locally over stdio:
