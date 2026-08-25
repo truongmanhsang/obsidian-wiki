@@ -8,14 +8,14 @@ import unicodedata
 from datetime import date
 from pathlib import Path
 
-from .normalize import _normalize
-from .frontmatter import FRONTMATTER_RE, parse_frontmatter, _parse_aliases_list, page_title
-from .links import WIKILINK_RE, TOKEN_RE, _alias_map, _out_links, _inbound_links
-from .index import INDEX_HEADER, first_summary_line, _existing_summaries, rebuild_index as _rebuild_index_fn
-from .log import LOG_HEADER, append_log as _append_log_fn, log_tail as _log_tail_fn, migrate_log_md_to_db, _ensure_db, _iter_log_rows  # noqa: F401
-from .dedup import detect_duplicates as _detect_duplicates_fn
-from .lint import lint as _lint_fn, _hub_for_orphan as _hub_fn, fix_orphans as _fix_orphans_fn
-from .search import search as _search_fn, prefetch_context as _prefetch_fn
+from obsidian_memory_core.wiki.normalize import _normalize
+from obsidian_memory_core.wiki.frontmatter import FRONTMATTER_RE, parse_frontmatter, _parse_aliases_list, page_title
+from obsidian_memory_core.wiki.links import WIKILINK_RE, TOKEN_RE, _alias_map, _out_links, _inbound_links
+from obsidian_memory_core.wiki.index import INDEX_HEADER, first_summary_line, _existing_summaries, rebuild_index as _rebuild_index_fn
+from obsidian_memory_core.wiki.log import LOG_HEADER, append_log as _append_log_fn, log_tail as _log_tail_fn, migrate_log_md_to_db, _ensure_db, _iter_log_rows  # noqa: F401
+from obsidian_memory_core.wiki.dedup import detect_duplicates as _detect_duplicates_fn
+from obsidian_memory_core.wiki.lint import lint as _lint_fn, _hub_for_orphan as _hub_fn, fix_orphans as _fix_orphans_fn
+from obsidian_memory_core.wiki.search import search as _search_fn, prefetch_context as _prefetch_fn
 
 logger = logging.getLogger(__name__)
 
@@ -916,7 +916,7 @@ class WikiVault:
         log_dates: dict[str, str] = {}
         try:
             # Prefer DB; fallback to markdown view
-            from .log import _iter_log_rows as _lr
+            from obsidian_memory_core.wiki.log import _iter_log_rows as _lr
             rows_for_lint = []
             try:
                 rows_for_lint = _lr(self)
@@ -1000,7 +1000,7 @@ class WikiVault:
         try:
             if self.log_db_path.exists():
                 try:
-                    from .log import log_tail as _lt
+                    from obsidian_memory_core.wiki.log import log_tail as _lt
                     # use up to 500 lines to capture guard warnings
                     log_content = _lt(self, lines=500)
                 except Exception:

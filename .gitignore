@@ -1,6 +1,9 @@
 __pycache__/
 .pytest_cache/
 *.py[cod]
+*.egg-info/
+build/
+dist/
 .DS_Store
 
 # Local runtime state and logs
@@ -11,3 +14,12 @@ wiki-backlog-state.json
 .env
 .env.*
 !.env.example
+
+# Local MCP/server artifacts
+.obsidian-memory.lock
+log.db
+log.db-*
+
+# Temporary test/build artifacts
+*.tmp
+*.tmp-*

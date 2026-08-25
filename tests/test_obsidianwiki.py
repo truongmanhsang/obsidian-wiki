@@ -6,6 +6,7 @@ Runs against a temp vault - never touches the real agent-vault.
 """
 
 import importlib.util
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -17,6 +18,42 @@ import pytest
 # redirects away (HERMES_HOME -> tmp). Load the module by its real install
 # path instead of going through plugin discovery.
 PLUGIN_DIR = Path.home() / ".hermes" / "plugins" / "obsidianwiki"
+
+
+def test_shared_core_write_revision_and_lock(tmp_path):
+    from obsidian_memory_core import MemoryStore
+
+    store = MemoryStore(tmp_path / "vault")
+    store.ensure_ready()
+    created = store.write("concepts/shared-core", "# Shared Core\n\nA durable memory page with enough content.\n")
+    assert created["status"] == "created"
+    revision = store.read("concepts/shared-core")["revision"]
+    updated = store.write(
+        "concepts/shared-core",
+        "# Shared Core\n\nUpdated durable memory content.\n",
+        expected_revision=revision,
+    )
+    assert updated["status"] == "updated"
+    assert store.read("concepts/shared-core")["revision"] != revision
+
+    with pytest.raises(Exception, match="revision conflict"):
+        store.write("concepts/shared-core", "# Stale\n\nRejected stale update.\n", expected_revision=revision)
+
+
+def test_shared_core_rejects_source_write(tmp_path):
+    from obsidian_memory_core import MemoryStore
+
+    store = MemoryStore(tmp_path / "vault")
+    store.ensure_ready()
+    with pytest.raises(Exception, match="read-only"):
+        store.write("sources/nope", "# Nope\n\nSources remain read-only.\n")
+
+
+def test_mcp_exposes_read_and_write_tools():
+    from mcp_server import mcp
+
+    names = {tool.name for tool in asyncio.run(mcp.list_tools())}
+    assert {"memory_search", "memory_read", "memory_write"}.issubset(names)
 
 
 def _load_module():

@@ -29,16 +29,23 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agent.memory_provider import MemoryProvider, RecallStatus
 from tools.registry import tool_error
 
+_PLUGIN_DIR = Path(__file__).resolve().parent
+if str(_PLUGIN_DIR) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_DIR))
+
 try:  # submodule import when loaded as a package
-    from .wiki import WikiVault, WikiVaultError
+    from .obsidian_memory_core import MemoryStore
+    from .obsidian_memory_core.wiki import WikiVault, WikiVaultError
 except ImportError:  # pragma: no cover - flat import fallback
-    from wiki import WikiVault, WikiVaultError  # type: ignore
+    from obsidian_memory_core import MemoryStore  # type: ignore
+    from obsidian_memory_core.wiki import WikiVault, WikiVaultError  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +130,7 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
 
     def __init__(self, config: dict | None = None):
         self._config = config or _load_plugin_config()
+        self._store: Optional[MemoryStore] = None
         self._vault: Optional[WikiVault] = None
         self._session_id = ""
         self._last_recall_count = 0
@@ -158,6 +166,7 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
         self._get_vault().ensure_skeleton()
 
     def shutdown(self) -> None:
+        self._store = None
         self._vault = None
 
     def backup_paths(self) -> List[str]:
@@ -165,9 +174,8 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
 
     def _get_vault(self) -> WikiVault:
         if self._vault is None:
-            self._vault = WikiVault(
-                str(self._config.get("vault_path", _DEFAULT_VAULT))
-            )
+            self._store = MemoryStore(str(self._config.get("vault_path", _DEFAULT_VAULT)))
+            self._vault = self._store.vault
         return self._vault
 
     # ------------------------------------------------------------------

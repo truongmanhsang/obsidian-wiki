@@ -147,3 +147,42 @@ python3 scripts/wiki_session_capture.py --session <session-id> --force
   hermes-agent updates never clobber it.
 - **Documentation rule:** every functional change to this plugin must be
   reflected in this README.
+
+## Shared memory core and MCP server
+
+The repository also exposes the same wiki operations to external coding
+agents through `obsidian_memory_core` and `mcp_server.py`:
+
+```text
+obsidian_memory_core
+        ▲
+        │
+ Hermes plugin       MCP server
+                            │
+                   local stdio first
+                            │
+                   HTTP later if needed
+```
+
+The MCP adapter supports `memory_search`, `memory_read`, `memory_list`,
+`memory_lint`, `memory_log`, and `memory_write`. Writes use an exclusive lock,
+safe vault paths, and an optional `expected_revision` SHA-256 check to reject
+stale updates from concurrent agents. Never store credentials, API keys,
+tokens, or passwords in the vault.
+
+Run locally over stdio:
+
+```bash
+OBSIDIAN_VAULT_PATH=/path/to/agent-vault \
+  /path/to/python mcp_server.py
+```
+
+Run HTTP during development with FastMCP:
+
+```bash
+fastmcp run mcp_server.py:mcp --transport http --host 127.0.0.1 --port 8000
+```
+
+The Hermes plugin currently retains its native compatibility surface while
+sharing the vault implementation. The next cleanup can move the remaining
+Hermes-specific façade methods onto `MemoryStore` without changing clients.

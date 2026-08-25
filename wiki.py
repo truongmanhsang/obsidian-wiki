@@ -17,27 +17,27 @@ if str(_this_dir) not in sys.path:
 
 try:
     # Preferred: absolute import via wiki package (works when plugin dir on sys.path)
-    from wiki.vault import WikiVault, WikiVaultError
-    from wiki.normalize import _normalize
-    from wiki.frontmatter import FRONTMATTER_RE, parse_frontmatter, _parse_aliases_list
-    from wiki.links import WIKILINK_RE, TOKEN_RE, _alias_map, _out_links, _inbound_links
-    from wiki.index import INDEX_HEADER, first_summary_line
-    from wiki.log import LOG_HEADER
-    from wiki.vault import TYPE_DIRS, DIR_TYPES, SECTION_TITLES, VALID_TYPES, STOPWORDS, MAX_READ_CHARS, MAX_WRITE_CHARS, ENTITY_TEMPLATE, CONCEPT_TEMPLATE
+    from obsidian_memory_core.wiki.vault import WikiVault, WikiVaultError
+    from obsidian_memory_core.wiki.normalize import _normalize
+    from obsidian_memory_core.wiki.frontmatter import FRONTMATTER_RE, parse_frontmatter, _parse_aliases_list
+    from obsidian_memory_core.wiki.links import WIKILINK_RE, TOKEN_RE, _alias_map, _out_links, _inbound_links
+    from obsidian_memory_core.wiki.index import INDEX_HEADER, first_summary_line
+    from obsidian_memory_core.wiki.log import LOG_HEADER
+    from obsidian_memory_core.wiki.vault import TYPE_DIRS, DIR_TYPES, SECTION_TITLES, VALID_TYPES, STOPWORDS, MAX_READ_CHARS, MAX_WRITE_CHARS, ENTITY_TEMPLATE, CONCEPT_TEMPLATE
     # Also expose functions for backward compat if imported as `import wiki`
-    from wiki.vault import WikiVault as _WV
+    from obsidian_memory_core.wiki.vault import WikiVault as _WV
     # Ensure WikiVault.parse_frontmatter is available (it is on class)
     parse_frontmatter = _WV.parse_frontmatter  # type: ignore
 except ImportError:
     try:
         # Fallback: relative package import when loaded as obsidianwiki.wiki (should not happen due to shadowing)
-        from .wiki.vault import WikiVault, WikiVaultError  # type: ignore
-        from .wiki.normalize import _normalize  # type: ignore
-        from .wiki.frontmatter import FRONTMATTER_RE, parse_frontmatter, _parse_aliases_list  # type: ignore
-        from .wiki.links import WIKILINK_RE, TOKEN_RE, _alias_map, _out_links, _inbound_links  # type: ignore
-        from .wiki.index import INDEX_HEADER, first_summary_line  # type: ignore
-        from .wiki.log import LOG_HEADER  # type: ignore
-        from .wiki.vault import TYPE_DIRS, DIR_TYPES, SECTION_TITLES, VALID_TYPES, STOPWORDS, MAX_READ_CHARS, MAX_WRITE_CHARS, ENTITY_TEMPLATE, CONCEPT_TEMPLATE  # type: ignore
+        from obsidian_memory_core.wiki.vault import WikiVault, WikiVaultError  # type: ignore
+        from obsidian_memory_core.wiki.normalize import _normalize  # type: ignore
+        from obsidian_memory_core.wiki.frontmatter import FRONTMATTER_RE, parse_frontmatter, _parse_aliases_list  # type: ignore
+        from obsidian_memory_core.wiki.links import WIKILINK_RE, TOKEN_RE, _alias_map, _out_links, _inbound_links  # type: ignore
+        from obsidian_memory_core.wiki.index import INDEX_HEADER, first_summary_line  # type: ignore
+        from obsidian_memory_core.wiki.log import LOG_HEADER  # type: ignore
+        from obsidian_memory_core.wiki.vault import TYPE_DIRS, DIR_TYPES, SECTION_TITLES, VALID_TYPES, STOPWORDS, MAX_READ_CHARS, MAX_WRITE_CHARS, ENTITY_TEMPLATE, CONCEPT_TEMPLATE  # type: ignore
     except ImportError:
         pass
 
