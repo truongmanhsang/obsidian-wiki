@@ -43,6 +43,8 @@ plugins:
     inject_index_on_start: true
 ```
 
+Vault discovery precedence is explicit and portable: Hermes plugin `vault_path`, then `OBSIDIAN_VAULT_PATH`, then `~/Documents/agent-vault`. The standalone MCP server does not read Hermes config; pass the same path via `OBSIDIAN_VAULT_PATH` or `--vault-path`.
+
 Activate with:
 
 ```bash

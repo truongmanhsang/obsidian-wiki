@@ -25,8 +25,17 @@ PLUGIN_DIR = Path(__import__("os").environ.get(
 def test_default_vault_path_is_portable(monkeypatch, tmp_path):
     import obsidian_memory_core.config as config
     monkeypatch.setattr(config.Path, "home", staticmethod(lambda: tmp_path))
-    monkeypatch.setattr(config, "_obsidian_config_candidates", lambda: [])
     assert config.default_vault_path() == str(tmp_path / "Documents" / "agent-vault")
+
+
+def test_vault_path_precedence(monkeypatch, tmp_path):
+    import obsidian_memory_core.config as config
+    monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path / "env-vault"))
+    assert config.vault_path({"vault_path": str(tmp_path / "config-vault")}) == str(tmp_path / "config-vault")
+    assert config.vault_path({}) == str(tmp_path / "env-vault")
+    monkeypatch.delenv("OBSIDIAN_VAULT_PATH")
+    monkeypatch.setattr(config, "default_vault_path", lambda: str(tmp_path / "portable-vault"))
+    assert config.vault_path({}) == str(tmp_path / "portable-vault")
 
 
 def test_shared_core_write_revision_and_lock(tmp_path):

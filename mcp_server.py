@@ -5,6 +5,7 @@ Run over stdio by default. For HTTP, use: fastmcp run mcp_server.py:mcp
 from __future__ import annotations
 
 import os
+import argparse
 from typing import Any
 
 import sys
@@ -21,8 +22,11 @@ mcp = FastMCP("obsidian-memory")
 _manager: IngestJobManager | None = None
 
 
+_SERVER_VAULT_PATH: str | None = None
+
+
 def _store(prepare: bool = False) -> MemoryStore:
-    path = vault_path()
+    path = _SERVER_VAULT_PATH or vault_path()
     store = MemoryStore(path)
     if prepare:
         store.ensure_ready()
@@ -99,6 +103,15 @@ def memory_ingest_status(job_id: str | None = None) -> dict[str, Any]:
 
 
 def main() -> None:
+    global _SERVER_VAULT_PATH
+    parser = argparse.ArgumentParser(description="Obsidian Wiki memory MCP server")
+    parser.add_argument(
+        "--vault-path",
+        help="vault path; otherwise use OBSIDIAN_VAULT_PATH or ~/Documents/agent-vault",
+    )
+    args = parser.parse_args()
+    if args.vault_path:
+        _SERVER_VAULT_PATH = args.vault_path
     mcp.run()
 
 
