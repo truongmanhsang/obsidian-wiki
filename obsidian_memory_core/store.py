@@ -1,4 +1,4 @@
-"""Concurrency-safe façade over the existing WikiVault implementation."""
+"""Concurrency-safe facade over the existing WikiVault implementation."""
 
 from __future__ import annotations
 

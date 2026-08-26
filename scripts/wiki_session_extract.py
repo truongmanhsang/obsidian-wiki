@@ -135,7 +135,7 @@ def dialogue_chars(text: str) -> int:
     body = re.split(r"\n## LLM Extraction\n", body, maxsplit=1)[0]
     body = re.sub(r"(?m)^# Session.*$", "", body)
     body = re.sub(r"(?m)^> Started:.*$", "", body)
-    body = re.sub(r"(?m)^## (?:Sang|Bông)(?: \([^\n]*\))?\s*$", "", body)
+    body = re.sub(r"(?m)^## (?:User|Assistant)(?: \([^\n]*\))?\s*$", "", body)
     return len(body.strip())
 
 

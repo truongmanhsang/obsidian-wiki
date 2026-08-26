@@ -3,6 +3,7 @@
 from __future__ import annotations
 import re
 from .links import TOKEN_RE, _alias_map
+from .intent import query_tokens
 
 def search(vault, query: str, limit: int = 5) -> list[dict]:
     from .vault import VALID_TYPES  # noqa
@@ -11,8 +12,7 @@ def search(vault, query: str, limit: int = 5) -> list[dict]:
     # search must also handle names and facts written with Unicode (e.g.
     # Vietnamese diacritics).  Keep the old regex as a fallback only for
     # compatibility; \w with the UNICODE flag preserves those words.
-    tokens = [t for t in re.findall(r"[^\W_]{3,}", query_low, flags=re.UNICODE)
-              if t not in vault.STOPWORDS]
+    tokens = query_tokens(query)
     results = []
     # Raw session transcripts are private source material, not ordinary searchable memory.
     all_pages = [p for p in vault.load_pages() if p["ptype"] != "source"]
@@ -30,7 +30,7 @@ def search(vault, query: str, limit: int = 5) -> list[dict]:
         body_hits = sum(low.count(t) for t in tokens)
         # A full phrase/name match is a stronger signal than scattered token
         # matches and prevents a common person's page from being buried by
-        # unrelated pages mentioning words such as "sinh" or "ngày".
+        # unrelated pages mentioning words such as "birth" or "date".
         phrase_hits = 0
         phrase = " ".join(tokens)
         if len(tokens) >= 2 and phrase in low:

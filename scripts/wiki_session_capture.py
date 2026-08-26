@@ -92,7 +92,10 @@ def export_session(cur, session_id: str) -> tuple[str, int, int] | None:
         text = clean_content(content or "")
         if len(text) < 1:
             continue
-        label = "Sang" if role == "user" else "Bông"
+        # Keep exported transcripts portable across users and deployments.
+        # The database role is the stable source of truth; never bake a
+        # particular person's name into the capture format.
+        label = str(role).strip().capitalize() or "Unknown"
         stamp = f" ({str(ts)[:16]})" if ts else ""
         parts.append(f"## {label}{stamp}")
         parts.append("")

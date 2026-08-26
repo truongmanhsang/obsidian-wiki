@@ -760,9 +760,8 @@ class WikiVault:
     # ------------------------------------------------------------------
 
     def _keyword_search(self, query: str, limit: int = 5) -> list[dict]:
-        tokens = [
-            t for t in TOKEN_RE.findall(query.lower()) if t not in STOPWORDS
-        ]
+        from .search import query_tokens
+        tokens = query_tokens(query)
         results = []
         all_pages = self.load_pages()
         aliases = _alias_map(all_pages)
@@ -843,7 +842,9 @@ class WikiVault:
         results = [
             r for r in self.search(query, limit=limit * 3) if r["type"] != "source"
         ][:limit]
-        strong = [r for r in results if r["score"] >= 1]
+        # Hybrid scores are normalized to [0, 1]; a curated relationship hit
+        # can be strong without reaching the old raw-keyword score of 1.
+        strong = [r for r in results if r["score"] >= 0.35]
         if not strong:
             return ""
         lines = ["## Obsidian Wiki Context", ""]

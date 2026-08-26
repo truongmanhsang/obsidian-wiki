@@ -14,6 +14,20 @@ from pathlib import Path
 import pytest
 
 
+class FakeEmbedder:
+    """Deterministic stand-in for fastembed in unit tests."""
+
+    def embed(self, texts):
+        vectors = []
+        for text in texts:
+            low = text.casefold()
+            vectors.append([
+                float("girlfriend" in low or "partner" in low),
+                float("trading" in low or "risk" in low),
+            ])
+        return vectors
+
+
 # The plugin installs to $HERMES_HOME/plugins/obsidianwiki/, which pytest
 # redirects away (HERMES_HOME -> tmp). Load the module by its real install
 # path instead of going through plugin discovery.
@@ -26,6 +40,161 @@ def test_default_vault_path_is_portable(monkeypatch, tmp_path):
     import obsidian_memory_core.config as config
     monkeypatch.setattr(config.Path, "home", staticmethod(lambda: tmp_path))
     assert config.default_vault_path() == str(tmp_path / "Documents" / "agent-vault")
+
+
+def test_query_tokens_preserve_unicode_diacritics():
+    from obsidian_memory_core.wiki.search import query_tokens
+
+    assert query_tokens("girlfriend birth date") == [
+        "girlfriend", "birth", "date",
+    ]
+
+
+def test_query_features_are_derived_from_page_text_not_domain_vocabulary():
+    from obsidian_memory_core.wiki.intent import analyze_query
+
+    features = analyze_query("girlfriend birth date")
+    assert "girlfriend birth date" in features.get("phrases", [])
+    assert "birth date" in features.get("phrases", [])
+    assert "relation" not in features
+
+
+def test_vietnamese_relationship_attribute_query_finds_curated_person_page(
+    monkeypatch, tmp_path,
+):
+    from obsidian_memory_core import MemoryStore
+    import obsidian_memory_core.wiki.fts as fts
+
+    store = MemoryStore(tmp_path / "vault")
+    store.ensure_ready()
+    store.write(
+        "people/sang-girlfriend",
+        "---\ntype: person\naliases: [Xuan Mai, Xuan Mai]\n"
+        "relations:\n  - subject: sang\n    relation: girlfriend\n---\n"
+        "# Xuan Mai\n\nGirlfriend of Sang.\n\n"
+        "Date of birth: 7 February 1997\n",
+    )
+    monkeypatch.setattr(fts, "_embedding_search", lambda *args, **kwargs: [])
+
+    result = store.search("girlfriend I birth date how many", limit=5)
+
+    assert result["results"]
+    assert result["results"][0]["path"] == "people/sang-girlfriend.md"
+    assert result["results"][0]["type"] == "person"
+
+
+def test_vector_embedding_fallback_runs_only_after_lexical_miss(monkeypatch, tmp_path):
+    from obsidian_memory_core import MemoryStore
+    import obsidian_memory_core.wiki.fts as fts
+
+    store = MemoryStore(tmp_path / "vault")
+    store.ensure_ready()
+    store.write("people/xuan-mai", "# Xuan Mai\n\nGirlfriend of Sang.\n")
+    monkeypatch.setattr(fts, "_get_embedder", lambda: FakeEmbedder())
+    fts._reset_embedder_for_tests()
+
+    result = store.search("partner of mine", limit=5)
+    assert result["count"] == 1
+    assert result["results"][0]["path"] == "people/xuan-mai.md"
+    assert result["results"][0]["match"] == "embedding"
+
+
+def test_vector_embedding_fallback_filters_below_threshold(monkeypatch, tmp_path):
+    from obsidian_memory_core import MemoryStore
+    import obsidian_memory_core.wiki.fts as fts
+
+    store = MemoryStore(tmp_path / "vault")
+    store.ensure_ready()
+    store.write("concepts/trading", "# Trading\n\nRisk management for markets.\n")
+    monkeypatch.setattr(fts, "_get_embedder", lambda: FakeEmbedder())
+    fts._reset_embedder_for_tests()
+
+    result = store.search("cooking recipe", limit=5)
+    assert result["count"] == 0
+
+
+def test_hybrid_search_runs_embedding_on_weak_lexical_hits_and_merges(monkeypatch, tmp_path):
+    from obsidian_memory_core import MemoryStore
+    import obsidian_memory_core.wiki.fts as fts
+
+    store = MemoryStore(tmp_path / "vault")
+    store.ensure_ready()
+    store.write("people/xuan-mai", "# Xuan Mai\n\nGirlfriend of Sang.\n")
+    store.write("concepts/calendar", "# Calendar\n\nBirthday reminders.\n")
+    calls = []
+
+    def fake_embedding_search(vault, query, limit=5, threshold=None):
+        calls.append(query)
+        return [{
+            "path": "people/xuan-mai.md",
+            "title": "Xuan Mai",
+            "type": "person",
+            "updated": "2026-08-26",
+            "score": 0.91,
+            "snippet": "",
+            "match": "embedding",
+        }]
+
+    monkeypatch.setattr(fts, "_embedding_search", fake_embedding_search)
+    result = store.search("birth date birthday", limit=5)
+
+    assert calls == ["birth date birthday"]
+    assert result["results"][0]["path"] == "people/xuan-mai.md"
+    assert result["results"][0]["match"] == "embedding"
+    assert result["results"][0]["score"] > 0.7
+
+
+def test_hybrid_search_does_not_embed_exact_name_match(monkeypatch, tmp_path):
+    from obsidian_memory_core import MemoryStore
+    import obsidian_memory_core.wiki.fts as fts
+
+    store = MemoryStore(tmp_path / "vault")
+    store.ensure_ready()
+    store.write(
+        "people/xuan-mai",
+        "---\ntype: person\naliases: [Xuan Mai]\n---\n"
+        "# Xuan Mai\n\nGirlfriend of Sang.\n",
+    )
+    monkeypatch.setattr(
+        fts, "_embedding_search",
+        lambda *args, **kwargs: pytest.fail("exact name should not trigger embedding"),
+    )
+
+    result = store.search("Xuan Mai", limit=5)
+
+    assert result["results"][0]["path"] == "people/xuan-mai.md"
+
+
+def test_vector_embeddings_are_cached_and_reused(monkeypatch, tmp_path):
+    from obsidian_memory_core import MemoryStore
+    import obsidian_memory_core.wiki.fts as fts
+    import sqlite3
+
+    class CountingEmbedder(FakeEmbedder):
+        calls = []
+
+        def embed(self, texts):
+            self.calls.append(list(texts))
+            return super().embed(texts)
+
+    embedder = CountingEmbedder()
+    monkeypatch.setattr(fts, "_get_embedder", lambda: embedder)
+    store = MemoryStore(tmp_path / "vault")
+    store.ensure_ready()
+    store.write("people/xuan-mai", "# Xuan Mai\n\nGirlfriend of Sang.\n")
+
+    store.search("partner of mine", limit=5)
+    assert len(embedder.calls) == 2
+    assert len(embedder.calls[0]) == 1  # query only
+    assert len(embedder.calls[1]) == 1  # one page on first cache fill
+
+    store.search("partner of mine", limit=5)
+    assert len(embedder.calls) == 3
+    assert len(embedder.calls[2]) == 1  # query only; page vector was cached
+
+    with sqlite3.connect(tmp_path / "vault" / "fts.db") as conn:
+        row = conn.execute("SELECT COUNT(*) FROM embedding_pages").fetchone()
+    assert row[0] == 1
 
 
 def test_vault_path_precedence(monkeypatch, tmp_path):
@@ -96,7 +265,7 @@ def test_extract_dialogue_filter_ignores_short_source(tmp_path):
     sys.modules["wiki_session_extract_filter_test"] = mod
     spec.loader.exec_module(mod)
 
-    source = "---\ntype: source\n---\n\n# Session hello\n\n## Sang\n\nhello\n\n## Bông\n\nChào anh Sang 👋\n"
+    source = "---\ntype: source\n---\n\n# Session hello\n\n## User\n\nhello\n\n## Assistant\n\nHello there 👋\n"
     assert mod.dialogue_chars(source) < mod.MIN_DIALOGUE_CHARS
 
 
@@ -298,8 +467,8 @@ class TestReadSearch:
 
     def test_search_handles_unicode_names_and_exact_phrases(self, provider):
         _call(provider, action="write", page="people/sang-girlfriend",
-              content="---\ntype: person\nupdated: 2026-08-26\ntags: [family]\naliases: [Nguyễn Trúc Xuân Mai, Xuân Mai]\n---\n\n# Nguyễn Trúc Xuân Mai\n\nDate of birth: 7 February 1997.\n")
-        r = _call(provider, action="search", query="Nguyễn Trúc Xuân Mai sinh ngày bao nhiêu", limit=5)
+              content="---\ntype: person\nupdated: 2026-08-26\ntags: [family]\naliases: [Xuan Mai, Xuan Mai]\n---\n\n# Xuan Mai\n\nDate of birth: 7 February 1997.\n")
+        r = _call(provider, action="search", query="Xuan Mai birth date how many", limit=5)
         assert r["results"]
         assert r["results"][0]["path"] == "people/sang-girlfriend.md"
 
@@ -361,7 +530,7 @@ class TestLint:
         # auto-filled. A genuine guard event (preserving prior aliases) still
         # only matters if the page is actually empty on disk.
         r = _call(provider, action="write", page="people/truc-icario",
-                  content="---\ntype: person\nupdated: 2026-08-01\ntags: [icario]\naliases: []\n---\n\n# Anh Trúc\n\nQA automation engineer.\n")
+                  content="---\ntype: person\nupdated: 2026-08-01\ntags: [icario]\naliases: []\n---\n\n# Mr. Truc\n\nQA automation engineer.\n")
         text = open(r["path"]).read()
         # Auto-fill kicked in: aliases no longer empty.
         assert "aliases: []" not in text, text
@@ -471,7 +640,7 @@ class TestSessionExtractReport:
                 {
                     "page": "people/hong-icario",
                     "action": "update",
-                    "title": "Chị Hồng (Icario)",
+                    "title": "Ms. Hong (Icario)",
                     "summary": "Direct manager and project team leader.",
                     "status": "updated",
                 },
@@ -483,7 +652,7 @@ class TestSessionExtractReport:
         text = source.read_text(encoding="utf-8")
         assert "## LLM Extraction" in text
         assert "[[entities/icario|Icario]]" in text
-        assert "[[people/hong-icario|Chị Hồng (Icario)]]" in text
+        assert "[[people/hong-icario|Ms. Hong (Icario)]]" in text
         assert "Project and team context." in text
         assert text.index("## LLM Extraction") > text.index("Dialogue.")
 

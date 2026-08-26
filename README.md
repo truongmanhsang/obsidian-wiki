@@ -581,9 +581,29 @@ python3 scripts/wiki_session_capture.py --session <session-id> --force
  tail -1 ~/.hermes/logs/wiki-extract-audit.jsonl | python3 -m json.tool
 ```
 
+## Search fallback
+
+Search uses SQLite FTS5 plus keyword scoring first. Only when both return no
+result does the lazy load `fastembed` and run cosine-similarity search over
+curated pages. Page vectors are persisted in the `embedding_pages` table in
+`fts.db`, keyed by content hash and model name, so unchanged pages are not
+re-embedded. The fallback intentionally avoids `sources/` pages and filters
+by a conservative similarity threshold.
+
+Configuration is available through environment variables:
+
+```bash
+OBSIDIAN_WIKI_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+OBSIDIAN_WIKI_EMBEDDING_THRESHOLD=0.55
+```
+
+The first semantic fallback downloads the model into fastembed's cache. If the
+dependency or model is unavailable, search safely returns the normal empty
+result rather than failing the wiki provider.
+
 ## Design notes
 
-- Pure stdlib for the wiki provider; no network, no API keys, no embedding model.
+- Lexical search remains dependency-light; vector fallback uses optional fastembed.
 - Prefetch returns nothing for trivial (<10 chars) queries and only surfaces
   strong matches (score >= 2), so noise stays out of context.
 - Writes are explicit-only: no auto-extraction mid-turn, because curated
