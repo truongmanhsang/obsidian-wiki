@@ -296,6 +296,13 @@ class TestReadSearch:
         paths = [x["path"] for x in r["results"]]
         assert paths[0] == "entities/alpha.md"
 
+    def test_search_handles_unicode_names_and_exact_phrases(self, provider):
+        _call(provider, action="write", page="people/sang-girlfriend",
+              content="---\ntype: person\nupdated: 2026-08-26\ntags: [family]\naliases: [Nguyễn Trúc Xuân Mai, Xuân Mai]\n---\n\n# Nguyễn Trúc Xuân Mai\n\nDate of birth: 7 February 1997.\n")
+        r = _call(provider, action="search", query="Nguyễn Trúc Xuân Mai sinh ngày bao nhiêu", limit=5)
+        assert r["results"]
+        assert r["results"][0]["path"] == "people/sang-girlfriend.md"
+
 
 class TestLint:
     def test_orphan_and_broken_link_detected(self, provider):

@@ -6,12 +6,19 @@ from .links import TOKEN_RE, _alias_map
 
 def search(vault, query: str, limit: int = 5) -> list[dict]:
     from .vault import VALID_TYPES  # noqa
-    tokens = [t for t in TOKEN_RE.findall(query.lower()) if t not in vault.STOPWORDS]
+    query_low = query.lower()
+    # TOKEN_RE is intentionally ASCII-oriented for wikilinks, but memory
+    # search must also handle names and facts written with Unicode (e.g.
+    # Vietnamese diacritics).  Keep the old regex as a fallback only for
+    # compatibility; \w with the UNICODE flag preserves those words.
+    tokens = [t for t in re.findall(r"[^\W_]{3,}", query_low, flags=re.UNICODE)
+              if t not in vault.STOPWORDS]
     results = []
     # Raw session transcripts are private source material, not ordinary searchable memory.
     all_pages = [p for p in vault.load_pages() if p["ptype"] != "source"]
     aliases = _alias_map(all_pages)
-    alias_tokens = [a for a in re.findall(r"[a-z0-9]{2,}", query.lower()) if a in aliases and a not in vault.STOPWORDS]
+    alias_tokens = [a for a in re.findall(r"[^\W_]{2,}", query_low, flags=re.UNICODE)
+                    if a in aliases and a not in vault.STOPWORDS]
     if not tokens and not alias_tokens:
         return []
     for page in all_pages:
@@ -21,6 +28,13 @@ def search(vault, query: str, limit: int = 5) -> list[dict]:
         title_hits += sum(5 for t in alias_tokens if aliases.get(t) == page["rel"])
         title_hits += sum(1 for t in tokens if any(t in a for a in my_aliases))
         body_hits = sum(low.count(t) for t in tokens)
+        # A full phrase/name match is a stronger signal than scattered token
+        # matches and prevents a common person's page from being buried by
+        # unrelated pages mentioning words such as "sinh" or "ngày".
+        phrase_hits = 0
+        phrase = " ".join(tokens)
+        if len(tokens) >= 2 and phrase in low:
+            phrase_hits = 12
         tags_val = page["meta"].get("tags", [])
         aliases_val = page["meta"].get("aliases", [])
         if isinstance(tags_val, list):
@@ -33,7 +47,7 @@ def search(vault, query: str, limit: int = 5) -> list[dict]:
             alias_parts = [p.strip().lower() for p in str(aliases_val).replace("[","").replace("]","").split(",") if p.strip()]
         tag_text = " ".join(tags_parts) + " " + str(page["meta"].get("type","")).lower() + " " + " ".join(alias_parts)
         tag_hits = sum(1 for t in tokens if t and t in tag_text)
-        score = title_hits * 3 + body_hits + tag_hits * 2
+        score = title_hits * 3 + body_hits + tag_hits * 2 + phrase_hits
         if score <= 0:
             continue
         snippet = ""
