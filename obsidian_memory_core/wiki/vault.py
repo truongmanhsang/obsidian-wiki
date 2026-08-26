@@ -103,6 +103,38 @@ The lesson or workflow, short and actionable.
 class WikiVaultError(Exception):
     """Raised for invalid vault operations."""
 
+
+def _auto_fill_aliases_tags(ptype: str, stem: str, content: str) -> tuple[list, list]:
+    """Deterministically derive aliases + tags for a page that left them empty.
+
+    No LLM: everything is derived from the page's own H1 title, filename stem,
+    and folder type. Aliases = the H1 title plus a title-cased filename (deduped).
+    Tags = the folder type plus non-trivial filename keywords. This guarantees
+    aliases/tags are never empty while never inventing facts outside the page.
+    """
+    m = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
+    title = m.group(1).strip() if m else ""
+    # filename -> title case (keep short acronyms upper)
+    ftitle = " ".join(
+        p if (p.isupper() and len(p) <= 4) else (p[:1].upper() + p[1:] if p else p)
+        for p in re.split(r"[-_]", stem)
+    )
+    aliases: list[str] = []
+    seen: set[str] = set()
+    for cand in (title, ftitle):
+        c = cand.strip()
+        if c and c.lower() not in seen:
+            seen.add(c.lower())
+            aliases.append(c)
+    # tags: folder type + filename keywords (>2 chars, not purely numeric)
+    kw = [w for w in re.split(r"[-_]", stem) if len(w) > 2 and not w.isdigit()]
+    tags = [ptype]
+    for w in kw:
+        if w not in tags:
+            tags.append(w)
+    return aliases, tags
+
+
 class WikiVault:
     """Deterministic, log-everything view of one Obsidian wiki vault."""
 
@@ -406,10 +438,13 @@ class WikiVault:
                         )
         had_fm = bool(FRONTMATTER_RE.match(content))
         if not had_fm:
+            # No frontmatter yet: derive a complete, non-empty trio from the
+            # page's own title/filename/type (never empty, never invented).
+            derived_aliases, derived_tags = _auto_fill_aliases_tags(ptype, path.stem, content)
             content = (
                 f"---\ntype: {ptype}\n"
                 f"updated: {date.today().isoformat()}\n"
-                f"tags: []\naliases: []\n---\n\n{content}"
+                f"tags: {derived_tags}\naliases: {derived_aliases}\n---\n\n{content}"
             )
         else:
             # refresh the updated stamp on every edit
@@ -454,9 +489,12 @@ class WikiVault:
                     return [p.strip().strip("'\"") for p in s.split(",") if p.strip()]
                 return fallback if fallback is not None else []
 
-            # Tags: preserve faithfully; empty is allowed (no guard)
+            # Tags: preserve faithfully; if empty, auto-fill from type/filename
+            # so the required trio is never empty (deterministic, no LLM).
             tags_val = meta.get("tags", [])
             tags_list = _norm_list(tags_val, [])
+            if not tags_list:
+                _, tags_list = _auto_fill_aliases_tags(ptype, path.stem, content)
             # Aliases: guard against accidental wipe to [] when previous had values
             aliases_val = meta.get("aliases", [])
             aliases_list = _norm_list(aliases_val, [])
@@ -472,6 +510,10 @@ class WikiVault:
                 except Exception:
                     pass
                 aliases_list = existing_aliases
+            elif not aliases_list:
+                # Empty and no prior aliases: auto-fill from title/filename
+                # so aliases are never empty going forward.
+                aliases_list, _ = _auto_fill_aliases_tags(ptype, path.stem, content)
 
             fm_pairs = [
                 ("type", ptype),

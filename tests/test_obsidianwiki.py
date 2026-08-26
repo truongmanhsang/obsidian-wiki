@@ -206,6 +206,37 @@ class TestWritePath:
         assert r["content"].count("updated: 20") == 1
         assert "second body" in r["content"]
 
+    def test_write_without_frontmatter_auto_fills_aliases_tags(self, provider):
+        # A page written with NO frontmatter must get a non-empty aliases+tags
+        # trio derived from its title/filename/type (no LLM, deterministic).
+        r = _call(provider, action="write", page="entities/quantum-flux",
+                  content="# Quantum Flux\n\nresearch on flux capacitors\n")
+        assert r["status"] == "created"
+        text = open(r["path"]).read()
+        assert "tags:" in text and "aliases:" in text
+        # aliases should include the H1 title
+        assert "Quantum Flux" in text
+        # no empty brackets
+        assert "aliases: []" not in text
+        assert "tags: []" not in text
+        # The page must lint clean (no aliases_wiped / missing frontmatter).
+        lint = json.loads(provider.handle_tool_call("obsidian_wiki", {"action": "lint"}))
+        assert "aliases_wiped" not in lint.get("problems", {}), lint
+        assert "missing_frontmatter" not in lint.get("problems", {}), lint
+
+    def test_write_with_empty_aliases_tags_auto_fills(self, provider):
+        # A page whose frontmatter leaves aliases/tags empty must be auto-filled
+        # on write, not left as [].
+        r = _call(provider, action="write", page="concepts/grid-risk",
+                  content="---\ntype: concept\nupdated: 2026-08-26\ntags: []\naliases: []\n---\n\n# Grid Risk\n\ngrid DCA risk notes\n")
+        assert r["status"] == "created"
+        text = open(r["path"]).read()
+        assert "aliases: []" not in text
+        assert "tags: []" not in text
+        assert "Grid Risk" in text
+        lint = json.loads(provider.handle_tool_call("obsidian_wiki", {"action": "lint"}))
+        assert "aliases_wiped" not in lint.get("problems", {}), lint
+
 
 class TestReadSearch:
     def test_read_miss_suggests_similar(self, provider):
@@ -276,11 +307,16 @@ class TestLint:
         assert lint["clean"] or "weak_connectivity" in probs or "orphans" in probs, lint
 
     def test_aliases_wiped_only_on_explicit_guard_event(self, provider):
-        # Regression: an empty-alias person page that is merely mentioned in
-        # the log must NOT be flagged. Only an explicit "preserving aliases"
-        # WRITE/UPDATE line naming this file proves prior aliases were wiped.
-        _call(provider, action="write", page="people/truc-icario",
-              content="---\ntype: person\nupdated: 2026-08-01\ntags: [icario]\naliases: []\n---\n\n# Anh Trúc\n\nQA automation engineer.\n")
+        # Regression: when a page is written with empty aliases, write_page now
+        # AUTO-FILLS them from the title/filename, so the page is never left
+        # empty and aliases_wiped must NOT fire for a page that merely got
+        # auto-filled. A genuine guard event (preserving prior aliases) still
+        # only matters if the page is actually empty on disk.
+        r = _call(provider, action="write", page="people/truc-icario",
+                  content="---\ntype: person\nupdated: 2026-08-01\ntags: [icario]\naliases: []\n---\n\n# Anh Trúc\n\nQA automation engineer.\n")
+        text = open(r["path"]).read()
+        # Auto-fill kicked in: aliases no longer empty.
+        assert "aliases: []" not in text, text
         vault = provider._get_vault()
         # A different page's WRITE line happens to mention truc-icario.
         vault.append_log("WRITE", "updated entities/icario, referenced truc-icario in team list")
@@ -288,7 +324,8 @@ class TestLint:
                                                       {"action": "lint"}))
         assert "aliases_wiped" not in lint1.get("problems", {}), lint1
 
-        # Now a genuine guard event naming the exact file.
+        # Now a genuine guard event naming the exact file. Because the page was
+        # already auto-filled (not empty), aliases_wiped must still NOT fire.
         vault.append_log(
             "WRITE",
             "frontmatter guard: preserving aliases ['Truc'] for "
@@ -296,9 +333,7 @@ class TestLint:
         )
         lint2 = json.loads(provider.handle_tool_call("obsidian_wiki",
                                                       {"action": "lint"}))
-        # The page still has empty aliases AND a real guard event -> flagged.
-        assert "aliases_wiped" in lint2.get("problems", {}), lint2
-        assert any("truc-icario" in w for w in lint2["problems"]["aliases_wiped"])
+        assert "aliases_wiped" not in lint2.get("problems", {}), lint2
 
     def test_md_suffix_links_resolve(self, provider):
         _call(provider, action="write", page="entities/e2",
