@@ -126,12 +126,22 @@ def _auto_fill_aliases_tags(ptype: str, stem: str, content: str) -> tuple[list, 
         if c and c.lower() not in seen:
             seen.add(c.lower())
             aliases.append(c)
-    # tags: folder type + filename keywords (>2 chars, not purely numeric)
-    kw = [w for w in re.split(r"[-_]", stem) if len(w) > 2 and not w.isdigit()]
-    tags = [ptype]
-    for w in kw:
-        if w not in tags:
-            tags.append(w)
+    # Tags: always include the page type, then at most four meaningful
+    # lowercase filename keywords. Stopwords and numeric/date fragments are
+    # noise; cap the total at five to avoid metadata explosion.
+    stopwords = {"and", "the", "for", "with", "from", "into", "over", "this", "that"}
+    kw = []
+    for word in re.split(r"[-_]", stem.lower()):
+        if len(word) <= 2 or word.isdigit() or word in stopwords:
+            continue
+        if word not in kw:
+            kw.append(word)
+        if len(kw) >= 4:
+            break
+    tags = [ptype.lower()]
+    for word in kw:
+        if word not in tags:
+            tags.append(word)
     return aliases, tags
 
 
@@ -919,6 +929,13 @@ class WikiVault:
     # ------------------------------------------------------------------
 
     def lint(self) -> dict:
+        """Run the canonical lint implementation from this class.
+
+        wiki.lint.lint is a compatibility wrapper that delegates here.
+        """
+        return self._lint_impl()
+
+    def _lint_impl(self) -> dict:
         pages = self.load_pages()
         stems = _alias_map(pages)
 

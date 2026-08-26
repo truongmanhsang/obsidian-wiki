@@ -237,6 +237,29 @@ class TestWritePath:
         lint = json.loads(provider.handle_tool_call("obsidian_wiki", {"action": "lint"}))
         assert "aliases_wiped" not in lint.get("problems", {}), lint
 
+    def test_auto_fill_tags_are_bounded_normalized_and_filtered(self, provider):
+        # Four useful filename keywords max, lowercase, no dates/stopwords.
+        r = _call(provider, action="write",
+                  page="concepts/alpha-and-the-beta-2026-08-long-tail-extra",
+                  content="# Alpha Beta\n\nlong tag normalization test\n")
+        text = open(r["path"]).read()
+        tags_line = next(line for line in text.splitlines() if line.startswith("tags:"))
+        assert tags_line == "tags: ['concept', 'alpha', 'beta', 'long', 'tail']"
+        assert "the" not in tags_line and "and" not in tags_line
+        assert "2026" not in tags_line and "08" not in tags_line
+
+    def test_auto_fill_handles_missing_h1_and_duplicate_title(self, provider):
+        # No H1 still gets a filename alias; identical H1/filename is deduped.
+        no_h1 = _call(provider, action="write", page="entities/no-heading",
+                      content="body without a heading but enough content\n")
+        no_h1_text = open(no_h1["path"]).read()
+        assert "aliases: ['No Heading']" in no_h1_text
+        dup = _call(provider, action="write", page="entities/same-title",
+                    content="# Same Title\n\nbody for duplicate alias check\n")
+        dup_text = open(dup["path"]).read()
+        assert "aliases: ['Same Title', 'Same Title']" not in dup_text
+        assert "aliases: ['Same Title']" in dup_text
+
 
 class TestReadSearch:
     def test_read_miss_suggests_similar(self, provider):
