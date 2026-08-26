@@ -25,6 +25,10 @@ class IngestJobManager:
         self.state_path = state_path or Path(os.environ.get("WIKI_JOB_DB", str(Path.home() / "Library/Application Support/obsidian-memory/jobs.db")))
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(str(self.state_path), check_same_thread=False)
+        try:
+            os.chmod(self.state_path, 0o600)
+        except OSError:
+            pass
         self._db.execute("CREATE TABLE IF NOT EXISTS jobs (job_id TEXT PRIMARY KEY, request_id TEXT UNIQUE, session_id TEXT, status TEXT, payload TEXT NOT NULL)")
         self._db.commit()
         self._jobs: dict[str, dict[str, Any]] = {}

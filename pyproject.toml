@@ -9,11 +9,21 @@ description = "Shared Obsidian wiki memory core and MCP server"
 requires-python = ">=3.11"
 dependencies = ["fastmcp>=2.0"]
 
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
 [tool.setuptools.packages.find]
-include = ["obsidian_memory_core*"]
+include = ["obsidian_memory_core*", "scripts*"]
 
 [tool.setuptools]
-py-modules = ["mcp_server"]
+py-modules = ["mcp_server", "config_schema", "wiki"]
+
+[tool.setuptools.data-files]
+"share/obsidianwiki" = ["plugin.yaml", "README.md"]
 
 [project.scripts]
 obsidian-memory-mcp = "mcp_server:main"

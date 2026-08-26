@@ -30,7 +30,9 @@ HERMES_STATE = Path(os.environ.get("HERMES_STATE_DB", str(Path.home() / ".hermes
 PLUGIN_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN_DIR))
 
-from wiki import WikiVault  # noqa: E402
+from obsidian_memory_core.wiki import WikiVault  # noqa: E402
+from obsidian_memory_core import MemoryStore  # noqa: E402
+from obsidian_memory_core.config import vault_path  # noqa: E402
 
 
 def clean_content(text: str) -> str:
@@ -44,6 +46,10 @@ def clean_content(text: str) -> str:
     if "<memory-context>" in text and "</memory-context>" in text:
         text = re.sub(r"<memory-context>.*?</memory-context>", "", text, flags=re.DOTALL)
         text = re.sub(r"<available-memories>.*?</available-memories>", "", text, flags=re.DOTALL)
+    text = re.sub(r"(?i)(authorization\s*:\s*bearer\s+)[^\s]+", r"\1[REDACTED]", text)
+    text = re.sub(r"(?i)(api[_ -]?key\s*[:=]\s*)[^\s,]+", r"\1[REDACTED]", text)
+    text = re.sub(r"(?i)(password|passwd|secret|token)\s*[:=]\s*[^\s,]+", r"\1=[REDACTED]", text)
+    text = re.sub(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", "[REDACTED PRIVATE KEY]", text, flags=re.DOTALL)
     return text.strip()
 
 
@@ -144,10 +150,8 @@ def main() -> int:
             if not is_cron_session(r[0])
         ]
 
-    vault = WikiVault(os.environ.get(
-        "OBSIDIAN_VAULT_PATH",
-        str(Path.home() / "Library/Mobile Documents/iCloud~md~obsidian/Documents/agent-vault"),
-    ))
+    store = MemoryStore(vault_path())
+    vault = store.vault
 
     def dated_rel(sid: str) -> str:
         """sources/sessions/YYYY/MM/DD/<sid> - date from the session id.
@@ -181,13 +185,12 @@ def main() -> int:
         if dialogue_chars < args.min_chars:
             skipped_small += 1
             continue
-        vault.write_page(
+        store.write_ingest(
             dated_rel(sid),
             markdown,
             note=f"captured {n_turns} turns from state.db",
-            allow_source=True,
         )
-        ensure_extract_status(target)
+        store.update_ingest_status(dated_rel(sid), "pending")
         captured.append((dated_rel(sid), n_turns, dialogue_chars))
 
     conn.close()

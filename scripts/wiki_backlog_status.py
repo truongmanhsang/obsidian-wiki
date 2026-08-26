@@ -4,13 +4,16 @@ import json, os, subprocess, sys, time
 from pathlib import Path
 from datetime import datetime
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from obsidian_memory_core.config import DEFAULT_VAULT_PATH
+
 VAULT = os.environ.get(
     "OBSIDIAN_VAULT_PATH",
-    str(Path.home() / "Library/Mobile Documents/iCloud~md~obsidian/Documents/agent-vault"),
+    DEFAULT_VAULT_PATH,
 )
-STATE = os.environ.get("WIKI_BACKLOG_STATE", str(Path.home() / ".hermes/cache/wiki-backlog-state.json"))
+STATE = os.environ.get("WIKI_BACKLOG_STATE", str(Path.home() / "Library/Application Support/obsidian-memory/wiki-backlog-state.json"))
 PID_HINT = "wiki_backlog_extract"
-TOTAL = 919
+
 
 st = {}
 if os.path.exists(STATE):
@@ -35,24 +38,28 @@ if pid:
 
 started = st.get("started")
 avg = ((time.time() - started) / max(done, 1)) if started and done else 0
-eta_h = (TOTAL - done) * avg / 3600 if avg else 0
+total = max(done, 1)
 
 # wiki page count
 try:
     sys.path.insert(0, os.path.expanduser("~/.hermes/plugins/obsidianwiki"))
-    from wiki import WikiVault
+    from obsidian_memory_core.wiki import WikiVault
     vault = WikiVault(VAULT)
     pages = vault.load_pages()
     curated = len([p for p in pages if p["ptype"] != "source"])
+    total = max(len(list(vault.root.glob("sources/sessions/**/*.md"))), done)
 except Exception:
     curated = "?"
+    total = max(done, 1)
+
+eta_h = max(total - done, 0) * avg / 3600 if avg else 0
 
 bar_len = 24
-filled = int(bar_len * done / TOTAL)
+filled = int(bar_len * done / max(total, 1))
 bar = "#" * filled + "-" * (bar_len - filled)
 
 print(f"WIKI BACKLOG STATUS  ({datetime.now():%d/%m %H:%M})")
-print(f"[{bar}] {done}/{TOTAL} ({100*done/TOTAL:.1f}%)")
+print(f"[{bar}] {done}/{total} ({100*done/max(total, 1):.1f}%)")
 status = f"RUNNING (pid {pid}, up {uptime_min:.0f}p)" if pid else "STOPPED"
 print(f"runner : {status}")
 print(f"pace   : {avg:.0f}s/source | failed: {len(failed)}")
@@ -64,6 +71,6 @@ if failed:
         print(f"  - {f['rel'][:70]}")
 
 # resume hint when stopped and work remains
-if not pid and done < TOTAL:
+if not pid and done < total:
     print("\nResume bang lenh:")
     print("  ~/.hermes/hermes-agent/venv/bin/python ~/.hermes/plugins/obsidianwiki/scripts/wiki_backlog_extract.py &")

@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -109,16 +110,18 @@ if str(_PLUGIN_DIR) not in sys.path:
 
 try:  # submodule import when loaded as a package
     from .obsidian_memory_core import MemoryStore, RevisionConflict
+    from .obsidian_memory_core.config import DEFAULT_VAULT_PATH, vault_path
     from .obsidian_memory_core.wiki import WikiVault, WikiVaultError
 except ImportError:  # pragma: no cover - flat import fallback
     from obsidian_memory_core import MemoryStore, RevisionConflict  # type: ignore
+    from obsidian_memory_core.config import DEFAULT_VAULT_PATH, vault_path  # type: ignore
     from obsidian_memory_core.wiki import WikiVault, WikiVaultError  # type: ignore
 
 logger = logging.getLogger(__name__)
 
 _GLYPH = "📖"
 
-_DEFAULT_VAULT = str(Path.home() / "Documents" / "agent-vault")
+_DEFAULT_VAULT = DEFAULT_VAULT_PATH
 
 
 def _load_plugin_config() -> dict:
@@ -241,11 +244,11 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
         self._vault = None
 
     def backup_paths(self) -> List[str]:
-        return [str(self._config.get("vault_path", _DEFAULT_VAULT))]
+        return [vault_path(self._config)]
 
     def _get_vault(self) -> WikiVault:
         if self._vault is None:
-            self._store = MemoryStore(str(self._config.get("vault_path", _DEFAULT_VAULT)))
+            self._store = MemoryStore(vault_path(self._config))
             self._vault = self._store.vault
         return self._vault
 
@@ -298,6 +301,10 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
         return str(self._config.get("mcp_url", _MCP_DEFAULT_URL))
 
     def _mcp_call(self, tool_name: str, arguments: dict) -> dict:
+        from urllib.parse import urlparse
+        host = (urlparse(self._mcp_url()).hostname or "").lower()
+        if host not in {"127.0.0.1", "localhost", "::1"} and os.environ.get("OBSIDIAN_MEMORY_ALLOW_REMOTE_MCP") != "1":
+            raise RuntimeError("remote MCP URL requires OBSIDIAN_MEMORY_ALLOW_REMOTE_MCP=1")
         result = _run_async(_call_mcp(self._mcp_url(), tool_name, arguments))
         if not isinstance(result, dict):
             raise RuntimeError("MCP returned a non-object result")
@@ -463,7 +470,7 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
             return tool_error(f"Unknown tool: {tool_name}")
         try:
             vault = self._get_vault()
-            if not vault.exists():
+            if not vault.exists() and not self._mcp_enabled():
                 return tool_error(self.unavailable_reason())
             action = args.get("action", "")
             if self._mcp_enabled():
@@ -589,7 +596,7 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
             return tool_error("write requires 'page' (e.g. concepts/my-note)")
         allow_dup = bool(args.get("allow_duplicate") or args.get("allowDuplicate"))
         if self._store is None:
-            self._store = MemoryStore(str(self._config.get("vault_path", _DEFAULT_VAULT)))
+            self._store = MemoryStore(vault_path(self._config))
         result = self._store.write(page, content, note=args.get("note", ""),
                                    expected_revision=args.get("expected_revision"),
                                    allow_duplicate=allow_dup)

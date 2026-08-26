@@ -18,15 +18,17 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN_ROOT))
-from wiki import WikiVault  # noqa: E402
+from obsidian_memory_core.wiki import WikiVault  # noqa: E402
+from obsidian_memory_core import MemoryStore  # noqa: E402
+from obsidian_memory_core.config import DEFAULT_VAULT_PATH  # noqa: E402
 
 VAULT = Path(
     os.environ.get(
         "OBSIDIAN_VAULT_PATH",
-        str(Path.home() / "Library/Mobile Documents/iCloud~md~obsidian/Documents/agent-vault"),
+        DEFAULT_VAULT_PATH,
     )
 )
-STATE = Path(os.environ.get("WIKI_BACKLOG_STATE", str(Path.home() / ".hermes/cache/wiki-backlog-state.json")))
+STATE = Path(os.environ.get("WIKI_BACKLOG_STATE", str(Path.home() / "Library/Application Support/obsidian-memory/wiki-backlog-state.json")))
 SCRIPT = str(Path(__file__).with_name("wiki_session_extract.py"))
 HERMES_PY = os.environ.get("HERMES_PYTHON", sys.executable)
 BATCH_DELAY = 5  # seconds between sources
@@ -69,7 +71,8 @@ import re  # noqa: E402
 
 
 def main() -> int:
-    vault = WikiVault(str(VAULT))
+    store = MemoryStore(str(VAULT))
+    vault = store.vault
     st = load_state()
     if st.get("started") is None:
         st["started"] = time.time()
@@ -92,7 +95,7 @@ def main() -> int:
         size = p.stat().st_size
         if size < 400:
             st["done"].append(rel)
-            stamp_extracted(p, "skip")
+            store.update_ingest_status(rel, "skip")
             continue
         rel_arg = str(p.relative_to(vault.root / "sources/sessions"))
         try:
@@ -110,7 +113,7 @@ def main() -> int:
                     clean = health.get("clean")
                 except json.JSONDecodeError:
                     n_pages, clean, extract_status = 0, None, "fail"
-                stamp_extracted(p, extract_status)
+                store.update_ingest_status(rel, extract_status)
                 st["done"].append(rel)
                 ok += 1
                 print(
@@ -123,7 +126,7 @@ def main() -> int:
                     (r.stderr or r.stdout or "no output")[-160:]
                 )
         except Exception as e:  # noqa: BLE001
-            stamp_extracted(p, "fail")
+            store.update_ingest_status(rel, "fail")
             st["failed"].append({"rel": rel, "err": str(e)[:150]})
             fail += 1
             print(f"[{i+1}/{len(pending)}] FAILED {rel}: {str(e)[:100]}", flush=True)

@@ -31,7 +31,9 @@ PLUGIN_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN_DIR))
 sys.path.insert(0, str(HERMES_SRC))
 
-from wiki import WikiVault, first_summary_line  # noqa: E402
+from obsidian_memory_core.wiki import WikiVault  # noqa: E402
+from obsidian_memory_core import MemoryStore  # noqa: E402
+from obsidian_memory_core.config import vault_path  # noqa: E402
 
 EXTRACT_INSTRUCTIONS = """You maintain a personal knowledge wiki for an AI agent. Below are raw \
 conversation transcripts (source documents) and the current wiki state. Extract DURABLE knowledge worth keeping long-term.
@@ -64,6 +66,12 @@ MAX_SOURCE_CHARS = 24000      # per session fed to the LLM
 MAX_PAGE_CHARS = 3000         # per candidate page shown for merge context
 MIN_DIALOGUE_CHARS = 200      # ignore greetings/small talk even when called directly
 AUDIT_LOG = Path(os.environ.get("WIKI_AUDIT_LOG", str(Path.home() / ".hermes" / "logs" / "wiki-extract-audit.jsonl")))
+AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+try:
+    if AUDIT_LOG.exists():
+        os.chmod(AUDIT_LOG, 0o600)
+except OSError:
+    pass
 
 
 def audit(event: str, **fields) -> None:
@@ -174,8 +182,12 @@ def _extraction_report(report: dict | None) -> str:
     return "\n".join(lines) + "\n"
 
 
-def update_extract_status(path: Path, status: str, report: dict | None = None) -> None:
+def update_extract_status(path: Path, status: str, report: dict | None = None, store: MemoryStore | None = None) -> None:
     """Update extraction bookkeeping and replace the report at note end."""
+    if store is not None:
+        store.update_ingest_status(str(path.relative_to(store.root)), status)
+        if report is None:
+            return
     text = path.read_text(encoding="utf-8")
     parts = text.split("---", 2)
     if len(parts) < 3:
@@ -217,6 +229,12 @@ def dedup_proposals(proposals: list[dict], vault: WikiVault) -> tuple[list[dict]
         elif action != "update":
             rejected.append({"proposal": prop, "why": f"bad action '{action}'"})
             continue
+        else:
+            try:
+                vault.safe_resolve(page)
+            except Exception:
+                rejected.append({"proposal": prop, "why": "invalid update path"})
+                continue
         if not str(prop.get("content", "")).strip() or len(prop.get("content", "")) < 40:
             rejected.append({"proposal": prop, "why": "content too short"})
             continue
@@ -224,7 +242,7 @@ def dedup_proposals(proposals: list[dict], vault: WikiVault) -> tuple[list[dict]
     return valid, rejected
 
 
-def apply_proposals(vault: WikiVault, proposals: list[dict]) -> list[dict]:
+def apply_proposals(vault: WikiVault, proposals: list[dict], store: MemoryStore | None = None) -> list[dict]:
     applied = []
     for prop in proposals:
         try:
@@ -246,11 +264,18 @@ def apply_proposals(vault: WikiVault, proposals: list[dict]) -> list[dict]:
                 else:
                     # tags ONLY - write_page generates type/updated/aliases
                     content = f"---\ntags: [{tag_str}]\n---\n\n{content}"
-            result = vault.write_page(
-                prop["page"], content,
-                note=f"extract: {prop.get('reason', '')[:100]}",
-                quiet_log=True,  # bulk op: aggregate into one daily line
-            )
+            if store is not None:
+                result = store.write(
+                    prop["page"], content,
+                    note=f"extract: {prop.get('reason', '')[:100]}",
+                    allow_duplicate=False,
+                )
+            else:
+                result = vault.write_page(
+                    prop["page"], content,
+                    note=f"extract: {prop.get('reason', '')[:100]}",
+                    quiet_log=True,
+                )
             applied.append({
                 "page": prop["page"],
                 "action": prop.get("action", ""),
@@ -269,20 +294,6 @@ def apply_proposals(vault: WikiVault, proposals: list[dict]) -> list[dict]:
             })
     return applied
 
-    # Quality gate: report wiki health right after applying so cron/hook logs
-    # surface any orphan/broken-link the extraction introduced.
-    try:
-        lint_result = vault.lint()
-        return {
-            "applied": applied,
-            "wiki_health": {
-                "clean": lint_result["clean"],
-                "problems": lint_result["problems"],
-            },
-        }
-    except Exception:
-        return {"applied": applied}
-
 
 
 def main() -> int:
@@ -293,10 +304,8 @@ def main() -> int:
     args = ap.parse_args()
     run_id = uuid.uuid4().hex[:12]
 
-    vault = WikiVault(os.environ.get(
-        "OBSIDIAN_VAULT_PATH",
-        str(Path.home() / "Library/Mobile Documents/iCloud~md~obsidian/Documents/agent-vault"),
-    ))
+    store = MemoryStore(vault_path())
+    vault = store.vault
     if not vault.exists():
         print(json.dumps({"error": "vault missing"}))
         return 1
@@ -343,7 +352,7 @@ def main() -> int:
               min_dialogue_chars=MIN_DIALOGUE_CHARS)
         if args.apply:
             for p in skipped_small:
-                update_extract_status(p, "skip")
+                update_extract_status(p, "skip", store=store)
     if not sources:
         audit("nothing_durable_to_extract", run_id=run_id,
               sessions=[p.stem for p in src_paths],
@@ -378,7 +387,7 @@ def main() -> int:
             if attempt == 2:
                 if args.apply:
                     for p in src_paths:
-                        update_extract_status(p, "fail")
+                        update_extract_status(p, "fail", store=store)
                 audit("extract_failed", run_id=run_id, error=str(e), attempts=3)
                 print(json.dumps({"error": f"LLM failed after 3 attempts: {e}", "run_id": run_id}))
                 return 1
@@ -386,7 +395,7 @@ def main() -> int:
     if not raw or not str(raw).strip():
         if args.apply:
             for p in src_paths:
-                update_extract_status(p, "fail")
+                update_extract_status(p, "fail", store=store)
         audit("extract_failed", run_id=run_id, error="empty LLM response after retries")
         print(json.dumps({"error": "empty LLM response after retries", "run_id": run_id}))
         return 1
@@ -403,14 +412,22 @@ def main() -> int:
     }
 
     if args.apply:
-        report["applied"] = apply_proposals(vault, valid) if valid else []
+        report["applied"] = apply_proposals(vault, valid, store) if valid else []
         applied = report["applied"]
+        try:
+            lint_result = vault.lint()
+            report["wiki_health"] = {
+                "clean": lint_result["clean"],
+                "problems": lint_result["problems"],
+            }
+        except Exception as exc:
+            report["wiki_health_error"] = str(exc)[:200]
         successful = [x for x in applied if x.get("status") != "error"]
         failed = [x for x in applied if x.get("status") == "error"]
         extract_status = "fail" if failed else ("success" if successful else "skip")
         report["extract_status"] = extract_status
         for source in sources:
-            update_extract_status(source["path"], extract_status, report)
+            update_extract_status(source["path"], extract_status, report, store)
         vault.append_log(
             "REFLECT",
             f"extract from {len(src_paths)} session(s): "

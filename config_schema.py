@@ -11,6 +11,7 @@ from plugins.memory.config_schema import (
     ProviderConfigSchema,
     ProviderField,
 )
+from obsidian_memory_core.config import DEFAULT_VAULT_PATH
 
 CONFIG_SCHEMA = ProviderConfigSchema(
     name="obsidianwiki",
@@ -21,7 +22,7 @@ CONFIG_SCHEMA = ProviderConfigSchema(
             key="vault_path",
             label="Vault path",
             kind=KIND_TEXT,
-            default="~/Documents/agent-vault",
+            default=DEFAULT_VAULT_PATH,
             description=(
                 "Path to the Obsidian vault used as the wiki "
                 "(entities/, people/, decisions/, environment/, concepts/, preferences/, answers/, sources/)."

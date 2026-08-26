@@ -34,7 +34,8 @@ async def submit(session_id: str) -> None:
 
 
 def main() -> int:
-    if os.environ.get("WIKI_INGEST_DISABLE"):
+    # Complete conversation capture is privacy-sensitive and opt-in.
+    if os.environ.get("WIKI_INGEST_DISABLE") or os.environ.get("WIKI_INGEST_ENABLE") != "1":
         return 0
     try:
         payload = json.load(sys.stdin) if not sys.stdin.isatty() else {}

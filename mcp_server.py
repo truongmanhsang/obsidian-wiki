@@ -15,16 +15,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fastmcp import FastMCP
 
 from obsidian_memory_core import IngestJobManager, MemoryStore, RevisionConflict
+from obsidian_memory_core.config import vault_path
 
 mcp = FastMCP("obsidian-memory")
 _manager: IngestJobManager | None = None
 
 
 def _store(prepare: bool = False) -> MemoryStore:
-    path = os.environ.get(
-        "OBSIDIAN_VAULT_PATH",
-        os.path.expanduser("~/Library/Mobile Documents/iCloud~md~obsidian/Documents/agent-vault"),
-    )
+    path = vault_path()
     store = MemoryStore(path)
     if prepare:
         store.ensure_ready()

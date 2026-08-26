@@ -8,7 +8,8 @@ def search(vault, query: str, limit: int = 5) -> list[dict]:
     from .vault import VALID_TYPES  # noqa
     tokens = [t for t in TOKEN_RE.findall(query.lower()) if t not in vault.STOPWORDS]
     results = []
-    all_pages = vault.load_pages()
+    # Raw session transcripts are private source material, not ordinary searchable memory.
+    all_pages = [p for p in vault.load_pages() if p["ptype"] != "source"]
     aliases = _alias_map(all_pages)
     alias_tokens = [a for a in re.findall(r"[a-z0-9]{2,}", query.lower()) if a in aliases and a not in vault.STOPWORDS]
     if not tokens and not alias_tokens:

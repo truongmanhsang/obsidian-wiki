@@ -17,7 +17,16 @@ import pytest
 # The plugin installs to $HERMES_HOME/plugins/obsidianwiki/, which pytest
 # redirects away (HERMES_HOME -> tmp). Load the module by its real install
 # path instead of going through plugin discovery.
-PLUGIN_DIR = Path.home() / ".hermes" / "plugins" / "obsidianwiki"
+PLUGIN_DIR = Path(__import__("os").environ.get(
+    "OBSIDIANWIKI_PLUGIN_DIR", str(Path(__file__).resolve().parents[1])
+))
+
+
+def test_default_vault_path_is_portable(monkeypatch, tmp_path):
+    import obsidian_memory_core.config as config
+    monkeypatch.setattr(config.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(config, "_obsidian_config_candidates", lambda: [])
+    assert config.default_vault_path() == str(tmp_path / "Documents" / "agent-vault")
 
 
 def test_shared_core_write_revision_and_lock(tmp_path):
