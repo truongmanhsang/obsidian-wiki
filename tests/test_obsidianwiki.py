@@ -259,6 +259,47 @@ class TestLint:
                                                     {"action": "lint"}))
         assert lint["clean"], lint
 
+    def test_stale_claims_ignores_mention_in_other_page_log(self, provider):
+        # Regression: a page whose stem is merely mentioned inside another
+        # page's WRITE line must NOT be flagged as stale. Only a WRITE/UPDATE
+        # line that names the page explicitly counts.
+        _call(provider, action="write", page="entities/sang-bot",
+              content="# Sang Bot\n\nlinks [[entities/sang-girlfriend|girlfriend]]\n")
+        # Another page's log line mentions sang-bot in passing.
+        vault = provider._get_vault()
+        vault.append_log("WRITE", "updated entities/sang-girlfriend with note about sang-bot meeting")
+        lint = json.loads(provider.handle_tool_call("obsidian_wiki",
+                                                    {"action": "lint"}))
+        probs = lint.get("problems", {})
+        assert "stale_claims" not in probs, probs
+        # The page itself is healthy (has inbound link).
+        assert lint["clean"] or "weak_connectivity" in probs or "orphans" in probs, lint
+
+    def test_aliases_wiped_only_on_explicit_guard_event(self, provider):
+        # Regression: an empty-alias person page that is merely mentioned in
+        # the log must NOT be flagged. Only an explicit "preserving aliases"
+        # WRITE/UPDATE line naming this file proves prior aliases were wiped.
+        _call(provider, action="write", page="people/truc-icario",
+              content="---\ntype: person\nupdated: 2026-08-01\ntags: [icario]\naliases: []\n---\n\n# Anh Trúc\n\nQA automation engineer.\n")
+        vault = provider._get_vault()
+        # A different page's WRITE line happens to mention truc-icario.
+        vault.append_log("WRITE", "updated entities/icario, referenced truc-icario in team list")
+        lint1 = json.loads(provider.handle_tool_call("obsidian_wiki",
+                                                      {"action": "lint"}))
+        assert "aliases_wiped" not in lint1.get("problems", {}), lint1
+
+        # Now a genuine guard event naming the exact file.
+        vault.append_log(
+            "WRITE",
+            "frontmatter guard: preserving aliases ['Truc'] for "
+            f"{vault.root / 'people' / 'truc-icario.md'} (would have wiped to [])",
+        )
+        lint2 = json.loads(provider.handle_tool_call("obsidian_wiki",
+                                                      {"action": "lint"}))
+        # The page still has empty aliases AND a real guard event -> flagged.
+        assert "aliases_wiped" in lint2.get("problems", {}), lint2
+        assert any("truc-icario" in w for w in lint2["problems"]["aliases_wiped"])
+
     def test_md_suffix_links_resolve(self, provider):
         _call(provider, action="write", page="entities/e2",
               content="# E2\n\nsee [[entities/e3.md]] please\n")

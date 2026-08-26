@@ -918,6 +918,10 @@ class WikiVault:
                 if hit != page["rel"]:
                     inbound[hit].add(page["rel"])
 
+        # Build last-touch dates from the LOG, but ONLY from WRITE/UPDATE
+        # rows that name the page explicitly. A page's "last touched" date must
+        # come from an actual edit event, not from a stray mention in another
+        # page's log line (which caused false-positive stale_claims before).
         log_dates: dict[str, str] = {}
         try:
             # Prefer DB; fallback to markdown view
@@ -928,24 +932,28 @@ class WikiVault:
                 use_db = len(rows_for_lint) > 0 or self.log_db_path.exists()
             except Exception:
                 use_db = False
+            # Edit kinds that prove a real write/edit of a page.
+            EDIT_KINDS = {"WRITE", "UPDATE"}
             if use_db and rows_for_lint:
                 for _d, _k, _msg, _auto, _ca in rows_for_lint:
-                    line = f"- {_d} {_k}{' (auto)' if _auto else ''}: {_msg}"
-                    m = re.match(r"^- (\d{4}-\d{2}-\d{2}) \w+(?:\s*\(auto\))?: (.*)$", line)
-                    if not m:
+                    kind = str(_k).upper()
+                    if kind not in EDIT_KINDS:
                         continue
-                    day, desc = m.groups()
+                    # Only credit pages explicitly named in the message.
                     for stem, rel in stems.items():
-                        if stem in desc.lower():
-                            log_dates[rel] = max(log_dates.get(rel, ""), day)
+                        if stem in _msg.lower() or rel.lower() in _msg.lower():
+                            log_dates[rel] = max(log_dates.get(rel, ""), _d)
             else:
+                import re as _re
                 for line in self.log_path.read_text(encoding="utf-8").splitlines():
-                    m = re.match(r"^- (\d{4}-\d{2}-\d{2}) \w+(?:\s*\(auto\))?: (.*)$", line)
+                    m = _re.match(r"^- (\d{4}-\d{2}-\d{2}) (\w+)(?:\(auto\))?: (.*)$", line)
                     if not m:
                         continue
-                    day, desc = m.groups()
+                    day, kind, desc = m.groups()
+                    if kind.upper() not in EDIT_KINDS:
+                        continue
                     for stem, rel in stems.items():
-                        if stem in desc.lower():
+                        if stem in desc.lower() or rel.lower() in desc.lower():
                             log_dates[rel] = max(log_dates.get(rel, ""), day)
         except OSError:
             pass
@@ -999,21 +1007,59 @@ class WikiVault:
         if missing_fm:
             problems["missing_frontmatter"] = missing_fm
 
-        # Frontmatter guard: warn when aliases is empty but page previously had
-        # non-empty aliases (detected via log). Also flag person pages with
-        # empty aliases as they should typically have at least one alias.
+        # Frontmatter guard: warn ONLY when a page's aliases are empty RIGHT NOW
+        # AND the log proves it previously held aliases that a write would have
+        # wiped. We require a "preserving aliases" WRITE/UPDATE line that names
+        # this exact file - an explicit guard event, not a stray mention.
+        #
+        # Deliberately NOT flagged:
+        #   - person pages with legitimately empty aliases (no prior aliases)
+        #   - any page merely "mentioned" somewhere in the log history
+        # Those produced false-positive aliases_wiped that forced manual cleanup.
         try:
             if self.log_db_path.exists():
                 try:
-                    from obsidian_memory_core.wiki.log import log_tail as _lt
-                    # use up to 500 lines to capture guard warnings
-                    log_content = _lt(self, lines=500)
+                    from obsidian_memory_core.wiki.log import _iter_log_rows as _lr
+                    log_rows = list(_lr(self))
                 except Exception:
-                    log_content = self.log_path.read_text(encoding="utf-8")
+                    log_rows = []
             else:
-                log_content = self.log_path.read_text(encoding="utf-8")
+                log_rows = []
+            # Collect explicit guard events (path -> True) from WRITE/UPDATE lines.
+            guard_paths: set[str] = set()
+            edit_kinds = {"WRITE", "UPDATE"}
+            if log_rows:
+                for _d, _k, _msg, _auto, _ca in log_rows:
+                    if str(_k).upper() not in edit_kinds:
+                        continue
+                    if "preserving aliases" not in _msg.lower():
+                        continue
+                    m_path = re.search(r"for\s+([^\s]+\.md)", _msg)
+                    if m_path:
+                        try:
+                            p = Path(m_path.group(1))
+                            if p.is_absolute():
+                                try:
+                                    rel_guess = p.relative_to(self.root).as_posix()
+                                except ValueError:
+                                    rel_guess = p.name
+                            else:
+                                rel_guess = m_path.group(1)
+                        except Exception:
+                            rel_guess = m_path.group(1)
+                        guard_paths.add(rel_guess.lower())
+            else:
+                try:
+                    for line in self.log_path.read_text(encoding="utf-8").splitlines():
+                        if "preserving aliases" not in line.lower():
+                            continue
+                        m_path = re.search(r"for\s+([^\s]+\.md)", line)
+                        if m_path:
+                            guard_paths.add(m_path.group(1).lower())
+                except OSError:
+                    pass
         except OSError:
-            log_content = ""
+            guard_paths = set()
         aliases_wiped: list[str] = []
         for page in pages:
             if page["ptype"] == "source":
@@ -1027,49 +1073,13 @@ class WikiVault:
                 is_empty = not s or s == "[]"
             if not is_empty:
                 continue
-            # Check log for evidence this page previously had aliases
-            # Heuristic 1: log contains frontmatter guard warning for this page
-            # Heuristic 2: log mentions the page stem and the page is not a stub
-            stem_low = page["stem"].lower()
+            # Only flag if the log explicitly recorded a guard that preserved
+            # prior aliases for THIS file (proving it used to have aliases).
             rel_low = page["rel"].lower()
-            logged = stem_low in log_content.lower() or rel_low in log_content.lower()
-            # Also check if log contains "preserving aliases" for this file
-            has_guard_warning = "preserving aliases" in log_content.lower() and stem_low in log_content.lower()
-            # For person type, empty aliases is always suspicious
-            if has_guard_warning:
-                aliases_wiped.append(f"{page['rel']} (aliases empty but log shows guard preserved prior aliases)")
-            elif logged and page["ptype"] == "person":
-                aliases_wiped.append(f"{page['rel']} (person page has empty aliases but log shows prior activity)")
-            elif has_guard_warning or (logged and is_empty):
-                # Generic: if page has been written before (logged) and now empty, flag as potential wipe
-                # Only flag if log indicates at least one prior WRITE/UPDATE for this page
-                # Count occurrences of stem in log
-                if log_content.lower().count(stem_low) >= 1:
-                    # Check raw frontmatter key exists but value is [] -> allowed but worth warning if previously guarded
-                    # We surface as aliases_wiped for visibility
-                    pass  # don't flag every empty-alias page to avoid noise; only guarded ones
-        # Also directly surface any recent guard warnings from log as lint problems
-        if "preserving aliases" in log_content.lower():
-            for line in log_content.splitlines():
-                if "preserving aliases" in line.lower():
-                    # extract path if present
-                    m_path = re.search(r"for\s+([^\s]+\.md)", line)
-                    if m_path:
-                        rel_guess = m_path.group(1)
-                        # Try to resolve to vault-relative path
-                        try:
-                            p = Path(rel_guess)
-                            # If absolute, make relative to root
-                            if p.is_absolute():
-                                try:
-                                    rel_guess = p.relative_to(self.root).as_posix()
-                                except ValueError:
-                                    rel_guess = p.name
-                        except Exception:
-                            pass
-                        entry = f"{rel_guess} (frontmatter guard triggered; aliases were preserved)"
-                        if entry not in aliases_wiped:
-                            aliases_wiped.append(entry)
+            if rel_low in guard_paths or rel_low.replace("/", "__") in guard_paths:
+                aliases_wiped.append(
+                    f"{page['rel']} (aliases empty but log shows guard preserved prior aliases)"
+                )
         if aliases_wiped:
             problems["aliases_wiped"] = sorted(set(aliases_wiped))
 
