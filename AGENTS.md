@@ -157,6 +157,23 @@ A successful tool response alone is not proof that the intended content was save
 - For code changes, keep repository source and tests generic; do not hardcode personal names, companies, or private domain examples unless they are required by the product behavior.
 - Keep the wiki canonical: update existing pages instead of creating near-duplicates.
 
+## Mandatory Proactive Memory Logging Rule
+
+**UNIVERSAL REQUIREMENT FOR ALL CODING & RESEARCH AGENTS (Codex, Claude Code, AGY, Gemini, etc.) ACROSS ALL PROJECTS:**
+
+Agents must **PROACTIVELY and AUTOMATICALLY** trigger memory consolidation into Obsidian Wiki **without waiting for user prompts or reminders**:
+
+1. **Empirical Experiments, Sweeps & Benchmarks (Any Project/Domain)**:
+   - Whenever an optimization, model training run, parameter sweep, benchmark, or backtest produces meaningful conclusions (breakthrough winners, high-efficiency configs, or notable failures/rejections), the agent **MUST immediately call `memory_write`** to record the exact environment, parameters, performance metrics, and actionable lessons learned into the corresponding `concepts/` or `entities/` page before concluding its turn.
+2. **Settled Architectural & Technical Decisions**:
+   - Whenever a key technical choice, architectural pattern, framework, data structure, or workflow approach is settled or rejected (with rationale), record it immediately in `decisions/` or `concepts/`.
+3. **Standing User Preferences & Safety Constraints**:
+   - Whenever the user expresses a standing preference, operating constraint, safety ceiling (e.g., "drawdown must be < 10k"), or negative rule (e.g., "do not modify core code"), the agent **MUST immediately update `preferences/`** via `memory_write`.
+4. **Non-Obvious Bug Discoveries, Root Causes & Fixes**:
+   - Whenever a non-trivial bug, system quirk, API edge-case, or environment pitfall is diagnosed and solved, persist the root cause and remedy into `concepts/` or `environment/`.
+5. **Never Defer to End of Session**:
+   - Do not postpone durable logging to the end of a conversation or wait for the user to ask "did you save this to memory?". Consolidate and persist knowledge dynamically as discoveries occur.
+
 ## Minimal examples
 
 ### Search and read
