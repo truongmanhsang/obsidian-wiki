@@ -149,8 +149,18 @@ class MemoryStore:
             if re.search(r"(?m)^extract_status:", fm):
                 fm = re.sub(r"(?m)^extract_status:.*$", f"extract_status: {status}", fm, count=1)
             else:
-                fm += f"\nextract_status: {status}"
-            self.vault.write_page(page, f"---\n{fm}\n---\n{body}", note=f"ingest status: {status}", allow_source=True)
+                # Keep the field at YAML top level.  Appending after
+                # ``aliases:`` is unsafe when aliases is a block list.
+                fm = re.sub(r"(?m)^(updated:[^\n]*|session:[^\n]*)$",
+                            rf"\1\nextract_status: {status}", fm, count=1)
+                if not re.search(r"(?m)^extract_status:", fm):
+                    fm = f"extract_status: {status}\n{fm.lstrip()}"
+            # Do not route this metadata-only source update through
+            # WikiVault.write_page: that canonicalizes frontmatter and drops
+            # source bookkeeping fields such as extract_status.  The caller
+            # already holds the exclusive lock, so an atomic replacement is
+            # safe and preserves the complete source document.
+            path.write_text(f"---\n{fm}\n---\n{body}", encoding="utf-8")
 
     def call(self, action: str, **kwargs: Any) -> dict[str, Any]:
         if action == "read": return self.read(kwargs["page"])

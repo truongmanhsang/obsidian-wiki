@@ -196,7 +196,13 @@ def update_extract_status(path: Path, status: str, report: dict | None = None, s
     if re.search(r"(?m)^extract_status:", fm):
         fm = re.sub(r"(?m)^extract_status:.*$", f"extract_status: {status}", fm, count=1)
     else:
-        fm = re.sub(r"(?m)^(aliases:[^\n]*)$", rf"\1\nextract_status: {status}", fm, count=1)
+        # ``aliases`` is normally a YAML block list.  Inserting directly
+        # after ``aliases:`` puts ``extract_status`` inside that list and
+        # corrupts the frontmatter.  Keep bookkeeping at the top level.
+        fm = re.sub(r"(?m)^(updated:[^\n]*|session:[^\n]*)$",
+                    rf"\1\nextract_status: {status}", fm, count=1)
+        if not re.search(r"(?m)^extract_status:", fm):
+            fm = f"extract_status: {status}\n{fm.lstrip()}"
     if status in {"success", "skip"} and not re.search(r"(?m)^extracted:", fm):
         fm += f"\nextracted: {date.today().isoformat()}"
     body = re.split(r"\n## LLM Extraction\n", body, maxsplit=1)[0].rstrip() + "\n\n"

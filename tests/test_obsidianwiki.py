@@ -304,6 +304,49 @@ def test_capture_quotes_frontmatter_aliases_with_yaml_special_chars():
     assert "aliases:\n  - 'Hỏi ngày sinh bạn gái #7'" in markdown
 
 
+def test_extract_status_is_not_inserted_inside_aliases_block(tmp_path):
+    script = PLUGIN_DIR / "scripts" / "wiki_session_extract.py"
+    spec = importlib.util.spec_from_file_location("wiki_session_extract_status_test", script)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["wiki_session_extract_status_test"] = mod
+    spec.loader.exec_module(mod)
+
+    source = tmp_path / "session.md"
+    source.write_text(
+        "---\n"
+        "type: source\n"
+        "updated: 2026-08-27\n"
+        "tags:\n"
+        "  - 'session'\n"
+        "aliases:\n"
+        "  - 'Hỏi ngày sinh bạn gái #7'\n"
+        "---\n\n# Session\n",
+        encoding="utf-8",
+    )
+    mod.update_extract_status(source, "success")
+    text = source.read_text(encoding="utf-8")
+    assert "extract_status: success\n" in text
+    assert "aliases:\n  - 'Hỏi ngày sinh bạn gái #7'" in text
+    assert "extract_status: success" in text
+    assert "aliases:\nextract_status:" not in text
+
+
+def test_store_ingest_status_preserves_aliases_block(tmp_path):
+    from obsidian_memory_core import MemoryStore
+
+    store = MemoryStore(tmp_path)
+    page = "sources/sessions/2026/08/27/session.md"
+    store.write_ingest(
+        page,
+        "---\ntype: source\nupdated: 2026-08-27\ntags:\n  - 'session'\naliases:\n  - 'Example #7'\n---\n\n# Session\n",
+    )
+    store.update_ingest_status(page, "success")
+    text = (tmp_path / page).read_text(encoding="utf-8")
+    assert "aliases:\n  - 'Example #7'" in text
+    assert "extract_status: success" in text
+    assert "aliases:\nextract_status:" not in text
+
+
 def test_frontmatter_serializes_tags_and_aliases_as_safe_block_lists(tmp_path):
     from obsidian_memory_core.wiki.vault import _format_yaml_list
 

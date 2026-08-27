@@ -58,7 +58,12 @@ def stamp_extracted(path: Path, status: str) -> None:
     if re.search(r"(?m)^extract_status:", fm):
         fm = re.sub(r"(?m)^extract_status:.*$", f"extract_status: {status}", fm, count=1)
     else:
-        fm += f"\nextract_status: {status}"
+        # ``aliases`` may be a YAML block list; append the field only as a
+        # top-level property, never between ``aliases:`` and its list items.
+        fm = re.sub(r"(?m)^(updated:[^\n]*|session:[^\n]*)$",
+                    rf"\1\nextract_status: {status}", fm, count=1)
+        if not re.search(r"(?m)^extract_status:", fm):
+            fm = f"extract_status: {status}\n{fm.lstrip()}"
     if status in {"success", "skip"} and not re.search(r"(?m)^extracted:", fm):
         fm += f"\nextracted: {date.today().isoformat()}"
     path.write_text(f"---{fm}\n---{m[2]}", encoding="utf-8")
