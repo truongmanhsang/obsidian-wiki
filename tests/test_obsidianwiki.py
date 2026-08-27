@@ -22,7 +22,7 @@ class FakeEmbedder:
         for text in texts:
             low = text.casefold()
             vectors.append([
-                float("girlfriend" in low or "partner" in low),
+                float("partner" in low or "partner" in low),
                 float("trading" in low or "risk" in low),
             ])
         return vectors
@@ -62,16 +62,16 @@ def _load_provider_for_tests(tmp_path):
 def test_query_tokens_preserve_unicode_diacritics():
     from obsidian_memory_core.wiki.search import query_tokens
 
-    assert query_tokens("girlfriend birth date") == [
-        "girlfriend", "birth", "date",
+    assert query_tokens("partner birth date") == [
+        "partner", "birth", "date",
     ]
 
 
 def test_query_features_are_derived_from_page_text_not_domain_vocabulary():
     from obsidian_memory_core.wiki.intent import analyze_query
 
-    features = analyze_query("girlfriend birth date")
-    assert "girlfriend birth date" in features.get("phrases", [])
+    features = analyze_query("partner birth date")
+    assert "partner birth date" in features.get("phrases", [])
     assert "birth date" in features.get("phrases", [])
     assert "relation" not in features
 
@@ -85,18 +85,18 @@ def test_vietnamese_relationship_attribute_query_finds_curated_person_page(
     store = MemoryStore(tmp_path / "vault")
     store.ensure_ready()
     store.write(
-        "people/sang-girlfriend",
-        "---\ntype: person\naliases: [Xuan Mai, Xuan Mai]\n"
-        "relations:\n  - subject: sang\n    relation: girlfriend\n---\n"
-        "# Xuan Mai\n\nGirlfriend of Sang.\n\n"
+        "people/example-partner",
+        "---\ntype: person\naliases: [Example Partner, Example Partner]\n"
+        "relations:\n  - subject: test-user\n    relation: partner\n---\n"
+        "# Example Partner\n\nPartner of Test User.\n\n"
         "Date of birth: 7 February 1997\n",
     )
     monkeypatch.setattr(fts, "_embedding_search", lambda *args, **kwargs: [])
 
-    result = store.search("girlfriend I birth date how many", limit=5)
+    result = store.search("partner I birth date how many", limit=5)
 
     assert result["results"]
-    assert result["results"][0]["path"] == "people/sang-girlfriend.md"
+    assert result["results"][0]["path"] == "people/example-partner.md"
     assert result["results"][0]["type"] == "person"
 
 
@@ -106,13 +106,13 @@ def test_vector_embedding_fallback_runs_only_after_lexical_miss(monkeypatch, tmp
 
     store = MemoryStore(tmp_path / "vault")
     store.ensure_ready()
-    store.write("people/xuan-mai", "# Xuan Mai\n\nGirlfriend of Sang.\n")
+    store.write("people/example-partner", "# Example Partner\n\nPartner of Test User.\n")
     monkeypatch.setattr(fts, "_get_embedder", lambda: FakeEmbedder())
     fts._reset_embedder_for_tests()
 
     result = store.search("partner of mine", limit=5)
     assert result["count"] == 1
-    assert result["results"][0]["path"] == "people/xuan-mai.md"
+    assert result["results"][0]["path"] == "people/example-partner.md"
     assert result["results"][0]["match"] == "embedding"
 
 
@@ -136,15 +136,15 @@ def test_hybrid_search_runs_embedding_on_weak_lexical_hits_and_merges(monkeypatc
 
     store = MemoryStore(tmp_path / "vault")
     store.ensure_ready()
-    store.write("people/xuan-mai", "# Xuan Mai\n\nGirlfriend of Sang.\n")
+    store.write("people/example-partner", "# Example Partner\n\nPartner of Test User.\n")
     store.write("concepts/calendar", "# Calendar\n\nBirthday reminders.\n")
     calls = []
 
     def fake_embedding_search(vault, query, limit=5, threshold=None):
         calls.append(query)
         return [{
-            "path": "people/xuan-mai.md",
-            "title": "Xuan Mai",
+            "path": "people/example-partner.md",
+            "title": "Example Partner",
             "type": "person",
             "updated": "2026-08-26",
             "score": 0.91,
@@ -156,7 +156,7 @@ def test_hybrid_search_runs_embedding_on_weak_lexical_hits_and_merges(monkeypatc
     result = store.search("birth date birthday", limit=5)
 
     assert calls == ["birth date birthday"]
-    assert result["results"][0]["path"] == "people/xuan-mai.md"
+    assert result["results"][0]["path"] == "people/example-partner.md"
     assert result["results"][0]["match"] == "embedding"
     assert result["results"][0]["score"] > 0.7
 
@@ -168,18 +168,18 @@ def test_hybrid_search_does_not_embed_exact_name_match(monkeypatch, tmp_path):
     store = MemoryStore(tmp_path / "vault")
     store.ensure_ready()
     store.write(
-        "people/xuan-mai",
-        "---\ntype: person\naliases: [Xuan Mai]\n---\n"
-        "# Xuan Mai\n\nGirlfriend of Sang.\n",
+        "people/example-partner",
+        "---\ntype: person\naliases: [Example Partner]\n---\n"
+        "# Example Partner\n\nPartner of Test User.\n",
     )
     monkeypatch.setattr(
         fts, "_embedding_search",
         lambda *args, **kwargs: pytest.fail("exact name should not trigger embedding"),
     )
 
-    result = store.search("Xuan Mai", limit=5)
+    result = store.search("Example Partner", limit=5)
 
-    assert result["results"][0]["path"] == "people/xuan-mai.md"
+    assert result["results"][0]["path"] == "people/example-partner.md"
 
 
 def test_vector_embeddings_are_cached_and_reused(monkeypatch, tmp_path):
@@ -198,7 +198,7 @@ def test_vector_embeddings_are_cached_and_reused(monkeypatch, tmp_path):
     monkeypatch.setattr(fts, "_get_embedder", lambda: embedder)
     store = MemoryStore(tmp_path / "vault")
     store.ensure_ready()
-    store.write("people/xuan-mai", "# Xuan Mai\n\nGirlfriend of Sang.\n")
+    store.write("people/example-partner", "# Example Partner\n\nPartner of Test User.\n")
 
     store.search("partner of mine", limit=5)
     assert len(embedder.calls) == 2
@@ -345,9 +345,9 @@ def test_mcp_reflect_tool_returns_grounded_sources(monkeypatch, tmp_path):
 
     mcp_server._SERVER_VAULT_PATH = str(tmp_path / "vault")
     store = mcp_server._store(prepare=True)
-    store.write("people/sang", "# Sang\n\nPrefers concise replies.\n")
+    store.write("people/test-user", "# Test User\n\nPrefers concise replies.\n")
     monkeypatch.setattr(mcp_server, "_run_reflection", lambda query, pages: "Grounded answer")
-    result = mcp_server.memory_reflect("What does Sang prefer?", limit=3)
+    result = mcp_server.memory_reflect("What does Test User prefer?", limit=3)
     assert result["reflection"] == "Grounded answer"
     assert result["sources"]
 
@@ -356,12 +356,12 @@ def test_reflect_returns_synthesis_from_relevant_pages(monkeypatch, tmp_path):
     mod = _load_module()
     provider = mod.ObsidianWikiMemoryProvider({"vault_path": str(tmp_path / "vault"), "access_mode": "direct"})
     provider.initialize(session_id="test")
-    _call(provider, action="write", page="people/sang", content="# Sang\n\nPrefers concise Telegram replies.\n")
-    monkeypatch.setattr(mod, "_run_reflection", lambda query, pages: "Sang prefers concise Telegram replies.")
-    result = _call(provider, action="reflect", query="What communication style does Sang prefer?")
-    assert result["query"] == "What communication style does Sang prefer?"
-    assert result["reflection"] == "Sang prefers concise Telegram replies."
-    assert result["sources"][0]["path"] == "people/sang.md"
+    _call(provider, action="write", page="people/test-user", content="# Test User\n\nPrefers concise Messaging replies.\n")
+    monkeypatch.setattr(mod, "_run_reflection", lambda query, pages: "Test User prefers concise Messaging replies.")
+    result = _call(provider, action="reflect", query="What communication style does Test User prefer?")
+    assert result["query"] == "What communication style does Test User prefer?"
+    assert result["reflection"] == "Test User prefers concise Messaging replies."
+    assert result["sources"][0]["path"] == "people/test-user.md"
 
 
 def test_reflect_requires_query(provider):
@@ -550,11 +550,11 @@ class TestReadSearch:
         assert paths[0] == "entities/alpha.md"
 
     def test_search_handles_unicode_names_and_exact_phrases(self, provider):
-        _call(provider, action="write", page="people/sang-girlfriend",
-              content="---\ntype: person\nupdated: 2026-08-26\ntags: [family]\naliases: [Xuan Mai, Xuan Mai]\n---\n\n# Xuan Mai\n\nDate of birth: 7 February 1997.\n")
-        r = _call(provider, action="search", query="Xuan Mai birth date how many", limit=5)
+        _call(provider, action="write", page="people/test-user-partner",
+              content="---\ntype: person\nupdated: 2026-08-26\ntags: [people]\naliases: [Example Partner, Example Partner]\n---\n\n# Example Partner\n\nDate of birth: 7 February 1997.\n")
+        r = _call(provider, action="search", query="Example Partner birth date how many", limit=5)
         assert r["results"]
-        assert r["results"][0]["path"] == "people/sang-girlfriend.md"
+        assert r["results"][0]["path"] == "people/test-user-partner.md"
 
 
 class TestLint:
@@ -595,11 +595,11 @@ class TestLint:
         # Regression: a page whose stem is merely mentioned inside another
         # page's WRITE line must NOT be flagged as stale. Only a WRITE/UPDATE
         # line that names the page explicitly counts.
-        _call(provider, action="write", page="entities/sang-bot",
-              content="# Sang Bot\n\nlinks [[entities/sang-girlfriend|girlfriend]]\n")
-        # Another page's log line mentions sang-bot in passing.
+        _call(provider, action="write", page="entities/test-user-bot",
+              content="# Test User Bot\n\nlinks [[entities/test-user-partner|partner]]\n")
+        # Another page's log line mentions test-user-bot in passing.
         vault = provider._get_vault()
-        vault.append_log("WRITE", "updated entities/sang-girlfriend with note about sang-bot meeting")
+        vault.append_log("WRITE", "updated entities/test-user-partner with note about test-user-bot meeting")
         lint = json.loads(provider.handle_tool_call("obsidian_wiki",
                                                     {"action": "lint"}))
         probs = lint.get("problems", {})
@@ -613,14 +613,14 @@ class TestLint:
         # empty and aliases_wiped must NOT fire for a page that merely got
         # auto-filled. A genuine guard event (preserving prior aliases) still
         # only matters if the page is actually empty on disk.
-        r = _call(provider, action="write", page="people/truc-icario",
-                  content="---\ntype: person\nupdated: 2026-08-01\ntags: [icario]\naliases: []\n---\n\n# Mr. Truc\n\nQA automation engineer.\n")
+        r = _call(provider, action="write", page="people/example-automation-specialist-example-project",
+                  content="---\ntype: person\nupdated: 2026-08-01\ntags: [example-project]\naliases: []\n---\n\n# Mr. Example Automation Specialist\n\nQA automation engineer.\n")
         text = open(r["path"]).read()
         # Auto-fill kicked in: aliases no longer empty.
         assert "aliases: []" not in text, text
         vault = provider._get_vault()
-        # A different page's WRITE line happens to mention truc-icario.
-        vault.append_log("WRITE", "updated entities/icario, referenced truc-icario in team list")
+        # A different page's WRITE line happens to mention example-automation-specialist-example-project.
+        vault.append_log("WRITE", "updated entities/example-project, referenced example-automation-specialist-example-project in team list")
         lint1 = json.loads(provider.handle_tool_call("obsidian_wiki",
                                                       {"action": "lint"}))
         assert "aliases_wiped" not in lint1.get("problems", {}), lint1
@@ -629,8 +629,8 @@ class TestLint:
         # already auto-filled (not empty), aliases_wiped must still NOT fire.
         vault.append_log(
             "WRITE",
-            "frontmatter guard: preserving aliases ['Truc'] for "
-            f"{vault.root / 'people' / 'truc-icario.md'} (would have wiped to [])",
+            "frontmatter guard: preserving aliases ['Example Automation Specialist'] for "
+            f"{vault.root / 'people' / 'example-automation-specialist-example-project.md'} (would have wiped to [])",
         )
         lint2 = json.loads(provider.handle_tool_call("obsidian_wiki",
                                                       {"action": "lint"}))
@@ -738,16 +738,16 @@ class TestSessionExtractReport:
             "extract_status": "success",
             "applied": [
                 {
-                    "page": "entities/icario",
+                    "page": "entities/example-project",
                     "action": "update",
-                    "title": "Icario",
+                    "title": "ExampleProject",
                     "summary": "Project and team context.",
                     "status": "updated",
                 },
                 {
-                    "page": "people/hong-icario",
+                    "page": "people/example-manager-example-project",
                     "action": "update",
-                    "title": "Ms. Hong (Icario)",
+                    "title": "Ms. Example Manager (ExampleProject)",
                     "summary": "Direct manager and project team leader.",
                     "status": "updated",
                 },
@@ -758,8 +758,8 @@ class TestSessionExtractReport:
         mod.update_extract_status(source, "success", report)
         text = source.read_text(encoding="utf-8")
         assert "## LLM Extraction" in text
-        assert "[[entities/icario|Icario]]" in text
-        assert "[[people/hong-icario|Ms. Hong (Icario)]]" in text
+        assert "[[entities/example-project|ExampleProject]]" in text
+        assert "[[people/example-manager-example-project|Ms. Example Manager (ExampleProject)]]" in text
         assert "Project and team context." in text
         assert text.index("## LLM Extraction") > text.index("Dialogue.")
 
@@ -777,7 +777,7 @@ class TestSessionExtractReport:
         text = source.read_text(encoding="utf-8")
         assert text.count("## LLM Extraction") == 1
         assert "[[concepts/new-lesson|New Lesson]]" in text
-        assert "[[entities/icario|Icario]]" not in text
+        assert "[[entities/example-project|ExampleProject]]" not in text
 
 
 class TestIngestJobManager:
