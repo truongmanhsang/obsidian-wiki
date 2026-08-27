@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import uuid
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,17 @@ class IngestJobManager:
                 row = self._db.execute("SELECT payload FROM jobs WHERE request_id=?", (request_id,)).fetchone()
                 if row:
                     job = json.loads(row[0])
+                    if self._is_retryable_completed(job):
+                        job["status"] = "queued"
+                        job["resubmitted_at"] = self._now()
+                        self._jobs[job["job_id"]] = job
+                        self._db.execute(
+                            "UPDATE jobs SET status=?, payload=? WHERE job_id=?",
+                            ("queued", json.dumps(job), job["job_id"]),
+                        )
+                        self._db.commit()
+                        threading.Thread(target=self._run, args=(job["job_id"],), daemon=True).start()
+                        return job.copy()
                     self._jobs[job["job_id"]] = job
                     self._requests[request_id] = job["job_id"]
                     return job.copy()
@@ -58,6 +70,20 @@ class IngestJobManager:
             threading.Thread(target=self._run, args=(job_id,), daemon=True).start()
             return job.copy()
 
+    @staticmethod
+    def _is_retryable_completed(job: dict[str, Any]) -> bool:
+        """Retry jobs that ran before state.db was fully flushed or before a fix.
+
+        The request_id remains idempotent, but an early end hook must not make
+        a too-small capture permanently terminal when the same session later
+        reaches its real boundary.
+        """
+        if job.get("status") != "completed":
+            return False
+        capture = str(job.get("capture_output", ""))
+        extract = str(job.get("extract_output", ""))
+        return '"skipped_too_small": 1' in capture or '"extract_status": "fail"' in extract
+
     def status(self, job_id: str | None = None) -> dict[str, Any]:
         with self._lock:
             rows = self._db.execute("SELECT payload FROM jobs ORDER BY rowid DESC LIMIT 50").fetchall()
@@ -73,6 +99,11 @@ class IngestJobManager:
     @staticmethod
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _capture_retry_delays() -> tuple[int, ...]:
+        """Allow the host a short window to flush final messages to state.db."""
+        return (0, 3, 10, 30)
 
     @staticmethod
     def _runtime_python() -> str:
@@ -104,9 +135,24 @@ class IngestJobManager:
             capture = [runtime_python, str(scripts / "wiki_session_capture.py"), "--min-chars", "300"]
             if job.get("session_id"):
                 capture += ["--session", str(job["session_id"])]
-            first = subprocess.run(capture, capture_output=True, text=True, timeout=120, env=env)
-            if first.returncode != 0:
-                raise RuntimeError((first.stderr or first.stdout or "capture failed")[-1000:])
+            first = None
+            # The host invokes on_session_end while the final assistant turn
+            # may still be flushing to state.db. Start after a short grace
+            # period, then retry only the too-small result.
+            for delay in self._capture_retry_delays():
+                if delay:
+                    time.sleep(delay)
+                first = subprocess.run(capture, capture_output=True, text=True, timeout=120, env=env)
+                if first.returncode != 0:
+                    raise RuntimeError((first.stderr or first.stdout or "capture failed")[-1000:])
+                try:
+                    capture_result = json.loads(first.stdout or "{}")
+                except json.JSONDecodeError:
+                    capture_result = {}
+                if not capture_result.get("skipped_too_small"):
+                    break
+            if first is None:
+                raise RuntimeError("capture did not run")
             # Extract only the session captured by this job. Without the
             # selector, the extractor scans the newest uncaptured sources and
             # can accidentally mine unrelated short/small-talk sessions.

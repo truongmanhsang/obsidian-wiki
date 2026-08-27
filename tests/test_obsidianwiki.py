@@ -781,6 +781,30 @@ class TestSessionExtractReport:
 
 
 class TestIngestJobManager:
+    def test_completed_early_or_failed_jobs_are_retryable(self):
+        from obsidian_memory_core.jobs import IngestJobManager
+
+        assert IngestJobManager._is_retryable_completed({
+            "status": "completed",
+            "capture_output": '{"skipped_too_small": 1}',
+            "extract_output": "",
+        })
+        assert IngestJobManager._is_retryable_completed({
+            "status": "completed",
+            "capture_output": "",
+            "extract_output": '{"extract_status": "fail"}',
+        })
+        assert not IngestJobManager._is_retryable_completed({
+            "status": "completed",
+            "capture_output": '{"skipped_too_small": 0}',
+            "extract_output": '{"extract_status": "success"}',
+        })
+
+    def test_capture_retry_policy_allows_state_db_flush(self):
+        from obsidian_memory_core import jobs
+
+        assert jobs.IngestJobManager._capture_retry_delays() == (0, 3, 10, 30)
+
     def test_extractor_uses_hermes_python_when_system_python_is_selected(self, tmp_path, monkeypatch):
         from obsidian_memory_core import jobs
 
