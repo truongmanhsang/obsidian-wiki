@@ -271,9 +271,13 @@ def apply_proposals(vault: WikiVault, proposals: list[dict], store: MemoryStore 
                     # tags ONLY - write_page generates type/updated/aliases
                     content = f"---\n{tag_block}\n---\n\n{content}"
             if store is not None:
+                expected_revision = None
+                if prop.get("action") == "update":
+                    expected_revision = store.read(prop["page"])["revision"]
                 result = store.write(
                     prop["page"], content,
                     note=f"extract: {prop.get('reason', '')[:100]}",
+                    expected_revision=expected_revision,
                     allow_duplicate=False,
                 )
             else:

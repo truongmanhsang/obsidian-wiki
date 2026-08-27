@@ -696,7 +696,7 @@ class TestLifecycle:
         assert "# Obsidian Wiki Memory" in block
         assert "Cat" in block
         assert "must never be edited with filesystem tools" in block
-        assert "mcp__obsidian_wiki__memory_write" in block
+        assert "action=write" in block
 
     def test_skeleton_created_on_demand(self, provider, tmp_path):
         v = provider._get_vault()
@@ -778,3 +778,36 @@ class TestSessionExtractReport:
         assert text.count("## LLM Extraction") == 1
         assert "[[concepts/new-lesson|New Lesson]]" in text
         assert "[[entities/icario|Icario]]" not in text
+
+
+class TestIngestJobManager:
+    def test_extractor_uses_hermes_python_when_system_python_is_selected(self, tmp_path, monkeypatch):
+        from obsidian_memory_core import jobs
+
+        hermes_python = tmp_path / "hermes-python"
+        hermes_python.write_text("", encoding="utf-8")
+        monkeypatch.setenv("HERMES_PYTHON", str(hermes_python))
+        assert jobs.IngestJobManager._runtime_python() == str(hermes_python)
+
+    def test_apply_update_passes_current_revision(self, tmp_path):
+        from obsidian_memory_core import MemoryStore
+        import importlib.util
+
+        script = PLUGIN_DIR / "scripts" / "wiki_session_extract.py"
+        spec = importlib.util.spec_from_file_location("wiki_session_extract_revision_test", script)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["wiki_session_extract_revision_test"] = mod
+        spec.loader.exec_module(mod)
+
+        store = MemoryStore(tmp_path / "vault")
+        store.ensure_ready()
+        store.write("concepts/existing", "# Existing\n\nOriginal durable content.\n")
+        revision = store.read("concepts/existing")["revision"]
+        result = mod.apply_proposals(
+            store.vault,
+            [{"page": "concepts/existing", "action": "update", "content": "# Existing\n\nUpdated durable content.\n"}],
+            store,
+        )
+        assert result[0]["status"] == "updated"
+        assert store.read("concepts/existing")["revision"] != revision

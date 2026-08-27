@@ -74,6 +74,15 @@ class IngestJobManager:
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
 
+    @staticmethod
+    def _runtime_python() -> str:
+        """Use Hermes' virtualenv for detached scripts and their dependencies."""
+        configured = os.environ.get("HERMES_PYTHON")
+        if configured:
+            return configured
+        candidate = Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "python3"
+        return str(candidate) if candidate.is_file() else sys.executable
+
     def _set(self, job_id: str, **fields: Any) -> None:
         with self._lock:
             self._jobs[job_id].update(fields)
@@ -91,7 +100,8 @@ class IngestJobManager:
             scripts = self.plugin_root / "scripts"
             env = os.environ.copy()
             env.setdefault("OBSIDIAN_VAULT_PATH", str(self.store.root))
-            capture = [sys.executable, str(scripts / "wiki_session_capture.py"), "--min-chars", "300"]
+            runtime_python = self._runtime_python()
+            capture = [runtime_python, str(scripts / "wiki_session_capture.py"), "--min-chars", "300"]
             if job.get("session_id"):
                 capture += ["--session", str(job["session_id"])]
             first = subprocess.run(capture, capture_output=True, text=True, timeout=120, env=env)
@@ -100,7 +110,7 @@ class IngestJobManager:
             # Extract only the session captured by this job. Without the
             # selector, the extractor scans the newest uncaptured sources and
             # can accidentally mine unrelated short/small-talk sessions.
-            extract = [sys.executable, str(scripts / "wiki_session_extract.py"), "--apply"]
+            extract = [runtime_python, str(scripts / "wiki_session_extract.py"), "--apply"]
             if job.get("session_id"):
                 extract += ["--sessions", str(job["session_id"])]
             second = subprocess.run(extract, capture_output=True, text=True, timeout=900, env=env)
