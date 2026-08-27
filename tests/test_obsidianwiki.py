@@ -50,9 +50,10 @@ def test_schema_instructs_direct_wrapper(monkeypatch, tmp_path):
 
 
 def _load_provider_for_tests(tmp_path):
-    from importlib import import_module
-
-    module = import_module("obsidianwiki")
+    # The CI command adds the plugin directory itself to PYTHONPATH, not its
+    # parent, so ``import obsidianwiki`` cannot resolve this directory as a
+    # package. Use the same real-path loader as the fixture below.
+    module = _load_module()
     return module.ObsidianWikiMemoryProvider({
         "vault_path": str(tmp_path / "vault"),
         "access_mode": "direct",
