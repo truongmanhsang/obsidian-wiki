@@ -157,7 +157,9 @@ def _load_plugin_config() -> dict:
 WIKI_TOOL_SCHEMA = {
     "name": "obsidian_wiki",
     "description": (
-        "Read and write the agent's long-term Obsidian wiki. The wiki is the "
+        "Direct wrapper for reading and writing the agent's long-term Obsidian wiki. "
+        "Always call this obsidian_wiki tool directly; do not use tool_search, "
+        "tool_describe, tool_call, or the raw mcp__obsidian_wiki__* tools. The wiki is the "
         "source of truth for durable knowledge about entities (projects, "
         "tools, systems) and concepts (lessons, workflows). Actions: read "
         "(full page), search (keyword scan), list (catalog from index.md), "
@@ -400,12 +402,12 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                 "recommendation, alternatives, and sources.",
                 "- Never store passwords, API keys, tokens, or other secrets in "
                 "the wiki. Run action=lint when checking vault health.",
-                "- Use the obsidian_wiki tool:",
-                "- action=search, read, list, write, lint, or log as appropriate.",
+                "- Use the obsidian_wiki tool directly for wiki operations.",
+                "- Do NOT use tool_search, tool_describe, or tool_call to access the wiki.",
+                "- Call obsidian_wiki with action=search, read, list, write, lint, or log as appropriate.",
                 "- Wiki content under the configured vault must never be edited "
                 "with filesystem tools such as patch, write_file, or terminal.",
-                "- For wiki pages, use obsidian_wiki action=write or the "
-                "mcp__obsidian_wiki__memory_write tool.",
+                "- For wiki pages, use obsidian_wiki action=write directly; do not call raw MCP tools.",
                 "- Before updating an existing wiki page, read it first and "
                 "pass its expected_revision.",
                 "- Files outside the vault, including plugin source code, README, "
@@ -540,6 +542,10 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         return [WIKI_TOOL_SCHEMA]
+
+    def get_direct_tool_names(self) -> set[str]:
+        """Keep the unified wiki facade directly visible to the model."""
+        return {"obsidian_wiki"}
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
         if tool_name != "obsidian_wiki":

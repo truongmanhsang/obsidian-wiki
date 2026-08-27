@@ -42,6 +42,23 @@ def test_default_vault_path_is_portable(monkeypatch, tmp_path):
     assert config.default_vault_path() == str(tmp_path / "Documents" / "agent-vault")
 
 
+def test_schema_instructs_direct_wrapper(monkeypatch, tmp_path):
+    provider = _load_provider_for_tests(tmp_path)
+    description = provider.get_tool_schemas()[0]["description"]
+    assert "obsidian_wiki tool directly" in description
+    assert "tool_search" in description
+
+
+def _load_provider_for_tests(tmp_path):
+    from importlib import import_module
+
+    module = import_module("obsidianwiki")
+    return module.ObsidianWikiMemoryProvider({
+        "vault_path": str(tmp_path / "vault"),
+        "access_mode": "direct",
+    })
+
+
 def test_query_tokens_preserve_unicode_diacritics():
     from obsidian_memory_core.wiki.search import query_tokens
 

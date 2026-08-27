@@ -1,6 +1,6 @@
 name: obsidianwiki
 version: 1.0.0
-description: "Obsidian wiki memory - LLM-wiki pattern (index-first recall, typed pages, auto index/log maintenance, lint) over a plain Obsidian vault the user owns."
+description: "Direct obsidian_wiki wrapper for Obsidian wiki memory. Always use obsidian_wiki directly; do not route wiki operations through tool_search, tool_describe, tool_call, or raw MCP tools."
 requires_env: []
 hooks:
   - on_session_end
