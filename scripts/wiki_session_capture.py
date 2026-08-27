@@ -53,6 +53,11 @@ def clean_content(text: str) -> str:
     return text.strip()
 
 
+def yaml_single_quote(value: str) -> str:
+    """Quote a scalar safely for YAML frontmatter."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 def export_session(cur, session_id: str) -> tuple[str, int, int] | None:
     """Return (markdown, n_turns) for one session, or None if empty."""
     rows = cur.execute(
@@ -76,7 +81,8 @@ def export_session(cur, session_id: str) -> tuple[str, int, int] | None:
         "extract_status: pending",
         "tags:",
         "  - session",
-        "aliases: []",
+        "aliases:",
+        f"  - {yaml_single_quote(title)}",
         "---",
         "",
         f"# Session {title}",

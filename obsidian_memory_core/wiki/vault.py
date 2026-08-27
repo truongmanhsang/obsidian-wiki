@@ -145,6 +145,18 @@ def _auto_fill_aliases_tags(ptype: str, stem: str, content: str) -> tuple[list, 
     return aliases, tags
 
 
+def _yaml_single_quote(value: object) -> str:
+    """Render one YAML scalar without allowing punctuation to change syntax."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _format_yaml_list(key: str, values: list) -> str:
+    """Render tags/aliases as a safe YAML block list."""
+    lines = [f"{key}:"]
+    lines.extend(f"  - {_yaml_single_quote(value)}" for value in values)
+    return "\n".join(lines)
+
+
 class WikiVault:
     """Deterministic, log-everything view of one Obsidian wiki vault."""
 
@@ -532,12 +544,14 @@ class WikiVault:
                 ("aliases", aliases_list),
             ]
             def _fmt(v):
+                return "[]" if not v else str(v)
+            fm_lines = ["---"]
+            for k, v in fm_pairs:
                 if isinstance(v, list):
-                    return "[" + ", ".join(str(x) for x in v) + "]" if v else "[]"
-                return str(v)
-            fm_text = "---\n" + "".join(
-                f"{k}: {_fmt(v)}\n" for k, v in fm_pairs
-            ) + "---\n\n"
+                    fm_lines.append(_format_yaml_list(k, v))
+                else:
+                    fm_lines.append(f"{k}: {_fmt(v)}")
+            fm_text = "\n".join(fm_lines) + "\n---\n\n"
             content = FRONTMATTER_RE.sub(lambda m: fm_text, content, count=1)
 
         is_new = not path.exists()

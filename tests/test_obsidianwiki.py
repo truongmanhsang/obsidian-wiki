@@ -258,6 +258,44 @@ def test_capture_measures_dialogue_not_markdown_metadata():
     assert len(markdown) > dialogue
 
 
+def test_capture_quotes_frontmatter_aliases_with_yaml_special_chars():
+    hook_path = PLUGIN_DIR / "scripts" / "wiki_session_capture.py"
+    spec = importlib.util.spec_from_file_location("wiki_session_capture_frontmatter_test", hook_path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["wiki_session_capture_frontmatter_test"] = mod
+    spec.loader.exec_module(mod)
+
+    class Result:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+        def fetchone(self):
+            return self.rows[0] if self.rows else None
+
+    class Cursor:
+        def execute(self, query, params):
+            if "FROM messages" in query:
+                return Result([("user", "A sufficiently long message", "2026-08-25")])
+            return Result([("Hỏi ngày sinh bạn gái #7", "1787635072.919327")])
+
+    result = mod.export_session(Cursor(), "20260827_092745_b8b2f291")
+    assert result is not None
+    markdown, _, _ = result
+    assert "aliases:\n  - 'Hỏi ngày sinh bạn gái #7'" in markdown
+
+
+def test_frontmatter_serializes_tags_and_aliases_as_safe_block_lists(tmp_path):
+    from obsidian_memory_core.wiki.vault import _format_yaml_list
+
+    rendered = _format_yaml_list("aliases", ["A #1", "O'Reilly", "[brackets]"])
+    assert rendered == "aliases:\n  - 'A #1'\n  - 'O''Reilly'\n  - '[brackets]'"
+    rendered = _format_yaml_list("tags", ["qa:automation", "#important"])
+    assert rendered == "tags:\n  - 'qa:automation'\n  - '#important'"
+
+
 def test_extract_dialogue_filter_ignores_short_source(tmp_path):
     script = PLUGIN_DIR / "scripts" / "wiki_session_extract.py"
     spec = importlib.util.spec_from_file_location("wiki_session_extract_filter_test", script)

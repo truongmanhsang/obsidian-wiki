@@ -231,6 +231,20 @@ Obsidian Memory MCP server; the server owns capture, extraction, deduplication,
 locking, and vault writes. It skips cron sessions and exits successfully on
 errors so memory ingestion cannot break the main agent response.
 
+All generated `tags` and `aliases` are rendered as YAML block lists with single-quoted scalars. This safely preserves values containing `#`, `:`, brackets, commas, quotes, Unicode, or leading YAML-significant characters.
+
+### Automatic ingest is enabled by default
+
+The hook ingests every completed non-cron session by default. No
+`WIKI_INGEST_ENABLE` variable is required, and `WIKI_INGEST_DISABLE` is no
+longer supported by the hook. For a launchd-managed macOS gateway, the hook
+must still be registered in `config.yaml` and the gateway must be restarted
+after configuration changes.
+
+After restarting, verify that a new completed session creates a dated source
+under `sources/sessions/YYYY/MM/DD/` and that `memory_ingest_status` reports a
+queued or completed job.
+
 The hook is configured in Hermes `config.yaml` as an `on_session_end` command,
 for example:
 
@@ -243,16 +257,6 @@ hooks:
 The hook is not enabled merely by installing this repository. It must be
 registered in the Hermes configuration and the gateway/session process may
 need a restart after configuration changes.
-
-Disable the automatic hook temporarily with:
-
-```bash
-export WIKI_INGEST_DISABLE=1
-```
-
-For a persistent gateway setup, define the variable in the environment used by
-the gateway. `WIKI_INGEST_DISABLE` prevents capture and extraction from the
-hook, but does not disable scripts that the operator runs manually.
 
 ### Manual session pipeline
 
@@ -576,13 +580,13 @@ Failures are fail-open: they are logged and do not block the user response.
 
 ### Privacy and local configuration
 
-Session sources contain verbatim user/assistant dialogue. When extraction is
-enabled, the selected transcript and matching wiki pages are sent to Hermes'
-auxiliary `run_oneshot` model. Operators should confirm the configured model's
-privacy and retention policy before enabling this hook for sensitive data.
-Set `WIKI_INGEST_DISABLE=1` to disable capture/extraction from the hook. The
-capture, extraction, and backlog scripts accept `OBSIDIAN_VAULT_PATH` so they
-can target the same vault as the plugin configuration; `HERMES_STATE_DB`,
+Session sources contain verbatim user/assistant dialogue. The selected
+transcript and matching wiki pages are sent to Hermes' auxiliary `run_oneshot`
+model. Ingest is enabled by default, so operators should confirm the configured
+model's privacy and retention policy before running Hermes with this plugin for
+sensitive data. The capture, extraction, and backlog scripts accept
+`OBSIDIAN_VAULT_PATH` so they can target the same vault as the plugin
+configuration; `HERMES_STATE_DB`,
 `HERMES_SRC`, `HERMES_PYTHON`, `WIKI_AUDIT_LOG`, and `WIKI_BACKLOG_STATE` are
 available for non-default local layouts. Runtime logs and state files are
 created owner-only where possible.

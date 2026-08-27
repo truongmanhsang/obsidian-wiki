@@ -249,7 +249,10 @@ def apply_proposals(vault: WikiVault, proposals: list[dict], store: MemoryStore 
             content = str(prop["content"])
             tags = prop.get("tags") or []
             if tags and isinstance(tags, list):
-                tag_str = ", ".join(str(t).lower().strip() for t in tags[:4])
+                tag_values = [str(t).lower().strip() for t in tags[:4]]
+                tag_block = "tags:\n" + "\n".join(
+                    "  - '" + t.replace("'", "''") + "'" for t in tag_values
+                )
                 if "---\n" in content:
                     # inject/replace tags line inside provided frontmatter
                     import re as _re
@@ -257,13 +260,16 @@ def apply_proposals(vault: WikiVault, proposals: list[dict], store: MemoryStore 
                     if m2:
                         fm = m2.group(1)
                         if _re.search(r"(?m)^tags:", fm):
-                            fm = _re.sub(r"(?m)^tags:.*$", f"tags: [{tag_str}]", fm, count=1)
+                            fm = _re.sub(
+                                r"(?ms)^tags:.*?(?=^[A-Za-z_][A-Za-z0-9_-]*:|\Z)",
+                                tag_block + "\n", fm, count=1,
+                            )
                         else:
-                            fm += f"\ntags: [{tag_str}]"
+                            fm += f"\n{tag_block}"
                         content = f"---\n{fm}\n---\n" + content[m2.end():]
                 else:
                     # tags ONLY - write_page generates type/updated/aliases
-                    content = f"---\ntags: [{tag_str}]\n---\n\n{content}"
+                    content = f"---\n{tag_block}\n---\n\n{content}"
             if store is not None:
                 result = store.write(
                     prop["page"], content,
