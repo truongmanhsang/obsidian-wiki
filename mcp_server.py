@@ -18,6 +18,30 @@ from fastmcp import FastMCP
 from obsidian_memory_core import IngestJobManager, MemoryStore, RevisionConflict
 from obsidian_memory_core.config import vault_path
 
+
+def _run_reflection(query: str, pages: list[dict[str, Any]]) -> str:
+    """Synthesize retrieved curated pages with Hermes' configured LLM."""
+    from agent.oneshot import run_oneshot
+
+    context = "\n\n".join(
+        f"SOURCE: {page['path']}\n{page['content']}" for page in pages
+    )
+    instructions = (
+        "You are the reflection layer for an Obsidian knowledge wiki. "
+        "Answer the user's question only from the supplied sources. "
+        "Synthesize across sources, distinguish facts from uncertainty, and "
+        "say when the sources do not establish an answer. Be concise. "
+        "Do not invent citations or facts."
+    )
+    return run_oneshot(
+        instructions=instructions,
+        user_input=f"Question:\n{query}\n\nSources:\n{context}",
+        task="memory_reflection",
+        max_tokens=1200,
+        temperature=0.2,
+        timeout=90.0,
+    )
+
 mcp = FastMCP("obsidian-memory")
 _manager: IngestJobManager | None = None
 
@@ -44,6 +68,30 @@ def _ingest_manager() -> IngestJobManager:
 def memory_search(query: str, limit: int = 5) -> dict[str, Any]:
     """Search durable project, people, decision, and concept memory."""
     return _store().search(query, max(1, min(limit, 50)))
+
+
+@mcp.tool()
+def memory_reflect(query: str, limit: int = 8) -> dict[str, Any]:
+    """Synthesize relevant curated wiki pages into a grounded answer."""
+    query = (query or "").strip()
+    if not query:
+        return {"error": "reflect requires a query"}
+    store = _store()
+    hits = store.search(query, max(1, min(limit, 20))).get("results", [])
+    pages = []
+    for hit in hits:
+        try:
+            page = store.read(hit["path"])
+            pages.append({"path": hit["path"], "content": page["content"]})
+        except Exception:
+            continue
+    if not pages:
+        return {"query": query, "reflection": "No relevant wiki pages found.", "sources": []}
+    try:
+        reflection = _run_reflection(query, pages)
+    except Exception as exc:
+        return {"error": "reflection_failed", "message": str(exc), "sources": [p["path"] for p in pages]}
+    return {"query": query, "reflection": reflection, "sources": [{"path": p["path"]} for p in pages]}
 
 
 @mcp.tool()

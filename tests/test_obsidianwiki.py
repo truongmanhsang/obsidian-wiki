@@ -282,7 +282,36 @@ def test_mcp_exposes_read_and_write_tools():
     from mcp_server import mcp
 
     names = {tool.name for tool in asyncio.run(mcp.list_tools())}
-    assert {"memory_search", "memory_read", "memory_write", "memory_ingest_submit", "memory_ingest_status"}.issubset(names)
+    assert {"memory_search", "memory_reflect", "memory_read", "memory_write", "memory_ingest_submit", "memory_ingest_status"}.issubset(names)
+
+
+def test_mcp_reflect_tool_returns_grounded_sources(monkeypatch, tmp_path):
+    import mcp_server
+
+    mcp_server._SERVER_VAULT_PATH = str(tmp_path / "vault")
+    store = mcp_server._store(prepare=True)
+    store.write("people/sang", "# Sang\n\nPrefers concise replies.\n")
+    monkeypatch.setattr(mcp_server, "_run_reflection", lambda query, pages: "Grounded answer")
+    result = mcp_server.memory_reflect("What does Sang prefer?", limit=3)
+    assert result["reflection"] == "Grounded answer"
+    assert result["sources"]
+
+
+def test_reflect_returns_synthesis_from_relevant_pages(monkeypatch, tmp_path):
+    mod = _load_module()
+    provider = mod.ObsidianWikiMemoryProvider({"vault_path": str(tmp_path / "vault"), "access_mode": "direct"})
+    provider.initialize(session_id="test")
+    _call(provider, action="write", page="people/sang", content="# Sang\n\nPrefers concise Telegram replies.\n")
+    monkeypatch.setattr(mod, "_run_reflection", lambda query, pages: "Sang prefers concise Telegram replies.")
+    result = _call(provider, action="reflect", query="What communication style does Sang prefer?")
+    assert result["query"] == "What communication style does Sang prefer?"
+    assert result["reflection"] == "Sang prefers concise Telegram replies."
+    assert result["sources"][0]["path"] == "people/sang.md"
+
+
+def test_reflect_requires_query(provider):
+    result = _call(provider, action="reflect", query="")
+    assert result["error"]
 
 
 def test_mcp_provider_filters_unrecognized_arguments(monkeypatch, tmp_path):
@@ -579,6 +608,29 @@ class TestPrefetch:
         provider.prefetch("tell me about widget gamma details")
         st = provider.recall_status()
         assert st is not None and st.count >= 1
+
+    def test_auto_prefetch_reflects_synthesis_queries(self, provider, monkeypatch):
+        _call(provider, action="write", page="concepts/trading-choice",
+              content="# Trading Choice\n\nA durable comparison of strategy risk and returns.\n")
+        mod = sys.modules[provider.__class__.__module__]
+        calls = []
+        monkeypatch.setattr(
+            mod, "_run_reflection",
+            lambda query, pages: calls.append((query, pages)) or "Synthesized wiki answer.",
+        )
+        provider._config["prefetch_method"] = "auto"
+        ctx = provider.prefetch("which strategy is best for trading risk?")
+        assert "Synthesized wiki answer." in ctx
+        assert calls and calls[0][1]
+
+    def test_recall_prefetch_does_not_call_reflection(self, provider, monkeypatch):
+        mod = sys.modules[provider.__class__.__module__]
+        monkeypatch.setattr(
+            mod, "_run_reflection",
+            lambda *args: pytest.fail("recall mode must not reflect"),
+        )
+        provider._config["prefetch_method"] = "recall"
+        provider.prefetch("tell me about a normal topic")
 
 
 class TestLifecycle:

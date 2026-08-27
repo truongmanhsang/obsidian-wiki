@@ -45,6 +45,15 @@ CONFIG_SCHEMA = ProviderConfigSchema(
             description="Skip recall for shorter queries.",
         ),
         ProviderField(
+            key="prefetch_method",
+            label="Prefetch method",
+            kind=KIND_TEXT,
+            default="recall",
+            description="Use recall, reflect, or auto reflection for synthesis queries.",
+            choices=("recall", "reflect", "auto"),
+            inline=True,
+        ),
+        ProviderField(
             key="inject_index_on_start",
             label="Inject catalog",
             kind=KIND_BOOL,

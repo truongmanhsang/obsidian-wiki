@@ -104,6 +104,20 @@ async def _call_mcp(url: str, tool_name: str, arguments: dict) -> dict:
 from agent.memory_provider import MemoryProvider, RecallStatus
 from tools.registry import tool_error
 
+
+def _run_reflection(query: str, pages: list[dict[str, Any]]) -> str:
+    """Synthesize retrieved curated pages with Hermes' configured LLM."""
+    from agent.oneshot import run_oneshot
+    context = "\n\n".join(f"SOURCE: {p['path']}\n{p['content']}" for p in pages)
+    return run_oneshot(
+        instructions=(
+            "Answer only from the supplied Obsidian wiki sources. Synthesize "
+            "across sources, distinguish uncertainty, and do not invent facts."
+        ),
+        user_input=f"Question:\n{query}\n\nSources:\n{context}",
+        task="memory_reflection", max_tokens=1200, temperature=0.2, timeout=90.0,
+    )
+
 _PLUGIN_DIR = Path(__file__).resolve().parent
 if str(_PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_DIR))
@@ -148,6 +162,7 @@ WIKI_TOOL_SCHEMA = {
         "tools, systems) and concepts (lessons, workflows). Actions: read "
         "(full page), search (keyword scan), list (catalog from index.md), "
         "write (create/update a page - index and log update automatically), "
+        "reflect (synthesize relevant pages with the configured LLM), "
         "lint (orphans, broken links, contradictions), log (recent "
         "operations). Pages live in entities/, people/, decisions/, "
         "environment/, concepts/, preferences/, answers/; sources/ is "
@@ -159,7 +174,7 @@ WIKI_TOOL_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["read", "search", "list", "write", "lint", "log"],
+                "enum": ["read", "search", "list", "write", "reflect", "lint", "log"],
                 "description": "Wiki operation to perform.",
             },
             "page": {
@@ -272,6 +287,12 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                 "key": "prefetch_min_query_chars",
                 "description": "Skip prefetch below this query length",
                 "default": "10",
+            },
+            {
+                "key": "prefetch_method",
+                "description": "Prefetch mode: recall, reflect, or auto",
+                "default": "recall",
+                "choices": ["recall", "reflect", "auto"],
             },
             {
                 "key": "inject_index_on_start",
@@ -430,17 +451,72 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
             if not vault.exists():
                 return ""
             limit = int(self._config.get("prefetch_limit", 3))
-            context = vault.prefetch_context(query, limit=limit)
+            method = str(self._config.get("prefetch_method", "recall")).lower()
+            if method not in {"recall", "reflect", "auto"}:
+                method = "recall"
+            should_reflect = method == "reflect" or (
+                method == "auto" and self._reflection_query(query)
+            )
+            if should_reflect:
+                if self._mcp_enabled():
+                    result = self._mcp_call(
+                        "memory_reflect", {"query": query, "limit": limit}
+                    )
+                    reflection = str(result.get("reflection", "")).strip()
+                    sources = result.get("sources", [])
+                    source_text = ", ".join(
+                        f"[[{s.get('path', '')}]]" for s in sources
+                        if isinstance(s, dict) and s.get("path")
+                    )
+                else:
+                    results = [
+                        r for r in vault.search(query, limit=max(limit * 3, limit))
+                        if r["type"] != "source" and r["score"] > 0
+                    ][:limit]
+                    pages = []
+                    for result in results:
+                        try:
+                            page = self._store.read(result["path"]) if self._store else None
+                            if page and page.get("content"):
+                                pages.append({
+                                    "path": result["path"],
+                                    "content": page["content"],
+                                })
+                        except Exception:
+                            logger.debug(
+                                "obsidianwiki reflection page read failed",
+                                exc_info=True,
+                            )
+                    reflection = _run_reflection(query, pages) if pages else ""
+                    source_text = ", ".join(f"[[{p['path']}]]" for p in pages)
+                context = (
+                    f"## Obsidian Wiki Reflection\n\n{reflection}\n\n"
+                    f"Sources: {source_text}"
+                    if reflection else ""
+                )
+            else:
+                context = vault.prefetch_context(query, limit=limit)
             hits = context.count("[[") if context else 0
             self._last_recall_count = hits
             if context:
                 vault.append_log(
-                    "QUERY", f"recall hit for: {query.strip()[:80]}", quiet=True
+                    "QUERY", f"prefetch hit for: {query.strip()[:80]}", quiet=True
                 )
             return context
         except Exception as e:
             logger.debug("obsidianwiki prefetch failed: %s", e)
             return ""
+
+    @staticmethod
+    def _reflection_query(query: str) -> bool:
+        """Identify queries that benefit from synthesis across wiki pages."""
+        q = query.casefold()
+        markers = (
+            "compare", "comparison", "which is best", "best", "why", "how",
+            "summarize", "summary", "synthesize", "recommend", "versus",
+            "so sánh", "tốt nhất", "tại sao", "vì sao", "tổng hợp", "khuyến nghị",
+        )
+        return any(marker in q for marker in markers)
 
     def recall_status(self) -> Optional[RecallStatus]:
         if self._last_recall_count > 0:
@@ -479,6 +555,7 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                     "search": "memory_search",
                     "list": "memory_list",
                     "write": "memory_write",
+                    "reflect": "memory_reflect",
                     "lint": "memory_lint",
                     "log": "memory_log",
                 }
@@ -489,6 +566,7 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                         "search": {"query", "limit"},
                         "list": {"limit"},
                         "write": {"page", "content", "note", "expected_revision", "allow_duplicate"},
+                        "reflect": {"query", "limit"},
                         "lint": set(),
                         "log": {"limit"},
                     }
@@ -506,6 +584,8 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                 return self._handle_read(vault, args)
             if action == "search":
                 return self._handle_search(vault, args)
+            if action == "reflect":
+                return self._handle_reflect(vault, args)
             if action == "list":
                 return self._handle_list(vault, args)
             if action == "write":
@@ -572,6 +652,27 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
         vault.append_log("QUERY", f"search: {query.strip()[:80]}", quiet=True)
         return json.dumps({"results": results, "count": len(results)},
                           ensure_ascii=False)
+
+    def _handle_reflect(self, vault: WikiVault, args: dict) -> str:
+        query = (args.get("query") or "").strip()
+        if not query:
+            return tool_error("reflect requires 'query'")
+        hits = vault.search(query, limit=min(int(args.get("limit", 8)), 20))
+        pages = []
+        for hit in hits:
+            try:
+                page = self._store.read(hit["path"]) if self._store else None
+                if page:
+                    pages.append({"path": hit["path"], "content": page["content"]})
+            except Exception:
+                continue
+        if not pages:
+            return json.dumps({"query": query, "reflection": "No relevant wiki pages found.", "sources": []})
+        try:
+            reflection = _run_reflection(query, pages)
+        except Exception as exc:
+            return tool_error(f"reflection failed: {exc}")
+        return json.dumps({"query": query, "reflection": reflection, "sources": [{"path": p["path"]} for p in pages]}, ensure_ascii=False)
 
     def _handle_list(self, vault: WikiVault, args: dict) -> str:
         stats = vault.stats()

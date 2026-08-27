@@ -16,6 +16,7 @@ enforces wiki discipline automatically, so the agent cannot let the vault rot.
 | Rule | How |
 |------|-----|
 | Index-first | prefetch() scores pages against each turn; system prompt carries a live catalog |
+| Optional reflection | prefetch() can call Hermes' configured LLM to synthesize relevant pages |
 | No drift | every `write` regenerates index.md stats/bullets and appends to log.db/log.md |
 | Typed pages | folder decides type: entities/, concepts/, sources/, answers/ |
 | Read-only sources | write_page rejects anything under sources/ |
@@ -27,6 +28,7 @@ enforces wiki discipline automatically, so the agent cannot let the vault rot.
 - read - full page content (+ similar-page suggestions on miss)
 - search - token-scored scan with snippets
 - list - stats + catalog
+- reflect - synthesize relevant wiki pages with Hermes' configured LLM
 - write - create/update page; frontmatter `type`/`updated` derived from
   folder and stamped automatically; index + log updated in the same call
 - lint - orphans, broken links, missing frontmatter, stale claims
@@ -40,8 +42,26 @@ plugins:
     vault_path: "/path/to/agent-vault"
     prefetch_limit: 3
     prefetch_min_query_chars: 10
+    prefetch_method: auto       # recall, reflect, or auto
     inject_index_on_start: true
 ```
+
+`prefetch_method` controls how wiki context is prepared before each Hermes
+turn:
+
+| Mode | Behavior | LLM call |
+|------|----------|----------|
+| `recall` | Fast lexical/vector-assisted page recall with snippets | No |
+| `reflect` | Search relevant pages, read their full content, then synthesize an answer | Yes, for matching pages |
+| `auto` | Use `recall` for ordinary lookups and `reflect` for synthesis-style queries such as comparisons, recommendations, “why”, “how”, summaries, and equivalent Vietnamese queries | Only when synthesis is detected |
+
+Reflection uses Hermes' configured provider/model through
+`agent.oneshot.run_oneshot()`; ObsidianWiki does not have a separate model or
+API key. It is a stateless auxiliary request containing the query and retrieved
+wiki pages, not the full chat history. Set `prefetch_method: recall` to avoid
+automatic reflection, or `prefetch_method: reflect` to request it for every
+query that has matching pages. In MCP access mode, the native provider calls
+the central `memory_reflect` tool, which uses the same Hermes-configured LLM.
 
 Vault discovery precedence is explicit and portable: Hermes plugin `vault_path`, then `OBSIDIAN_VAULT_PATH`, then `~/Documents/agent-vault`. The standalone MCP server does not read Hermes config; pass the same path via `OBSIDIAN_VAULT_PATH` or `--vault-path`.
 
@@ -52,7 +72,7 @@ hermes config set memory.provider obsidianwiki
 hermes memory status   # verify
 ```
 
-Restart the session/gateway after switching providers.
+Restart the session/gateway after switching providers or changing this config.
 
 ## Configure MCP clients
 
@@ -145,8 +165,8 @@ agy mcp list
 ### Verify and use the connection
 
 Restart the client after changing its MCP configuration. Ask it to list or use
-`memory_search`, `memory_read`, `memory_list`, `memory_lint`, `memory_log`, and
-`memory_write`.
+`memory_search`, `memory_read`, `memory_list`, `memory_reflect`,
+`memory_lint`, `memory_log`, and `memory_write`.
 
 Useful checks:
 
@@ -317,7 +337,7 @@ artifacts.
 | Process an old backlog | No | Yes, `wiki_backlog_extract.py` or MCP ingest |
 | Show backlog status | No | Yes, `wiki_backlog_status.py` or `memory_ingest_status` |
 | Run the full wrapper | No | Yes, `wiki_ingest.sh` |
-| MCP read/write memory | No passive capture; MCP exposes memory operations and ingest tools | Yes, through any MCP client |
+| MCP read/write/reflect memory | No passive capture; MCP exposes memory operations, reflection, and ingest tools | Yes, through any MCP client |
 
 The plugin integrates completed Hermes sessions only through the configured
 hook. The hook is a thin MCP client and does not write the vault itself. The
@@ -631,8 +651,9 @@ obsidian_memory_core
 ```
 
 The MCP adapter supports `memory_search`, `memory_read`, `memory_list`,
-`memory_lint`, `memory_log`, `memory_write`, `memory_ingest_submit`, and
-`memory_ingest_status` (8 tools). Ingest jobs are serialized by one central
+`memory_reflect`, `memory_lint`, `memory_log`, `memory_write`,
+`memory_ingest_submit`, and `memory_ingest_status` (9 tools). Reflection uses
+Hermes' configured LLM through the shared `run_oneshot` runtime. Ingest jobs are serialized by one central
 worker; writes use an exclusive lock and require an `expected_revision` SHA-256
 check when updating an existing page, rejecting stale updates from concurrent
 agents. Never store credentials, API keys,
@@ -690,7 +711,7 @@ Expected result includes:
 
 ```text
 Server:  obsidian-memory
-Tools:  8
+Tools:  9
 ```
 
 The internal FastMCP server name remains `obsidian-memory`; the MCP client
@@ -766,7 +787,8 @@ script available, the command can instead be:
 
 Restart the Codex MCP session after changing its configuration. Ask Codex to
 list the available MCP tools; it should discover `memory_search`,
-`memory_read`, `memory_list`, `memory_lint`, `memory_log`, and `memory_write`.
+`memory_read`, `memory_list`, `memory_reflect`, `memory_lint`, `memory_log`, and
+`memory_write`.
 
 ### Claude Code, Claude Desktop, Cursor, and AGY
 
@@ -800,6 +822,7 @@ possible.
 | `memory_search` | `query`, optional `limit` | Search durable wiki pages |
 | `memory_read` | `page` | Read a page and return its `revision` |
 | `memory_list` | optional `limit` | Return catalog, types, and statistics |
+| `memory_reflect` | `query`, optional `limit` | Synthesize relevant wiki pages with Hermes' configured LLM |
 | `memory_lint` | none | Check links, orphans, and wiki health |
 | `memory_log` | optional `limit` | Return recent operation logs |
 | `memory_write` | `page`, `content`, optional `note`, `expected_revision` | Create or safely update a page; use read-then-write for existing pages |
