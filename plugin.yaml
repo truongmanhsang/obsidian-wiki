@@ -4,3 +4,4 @@ description: "Direct obsidian_wiki wrapper for Obsidian wiki memory. Always use 
 requires_env: []
 hooks:
   - on_session_end
+  - on_session_finalize

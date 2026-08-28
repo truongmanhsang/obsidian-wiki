@@ -37,6 +37,36 @@ class IngestJobManager:
         self._running: str | None = None
         self._worker_lock = threading.Lock()
 
+    def recover_unsubmitted_boundaries(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Queue ended non-cron sessions whose boundary event was lost."""
+        state_db = Path(os.environ.get("HERMES_STATE_DB", str(Path.home() / ".hermes" / "state.db")))
+        conn = sqlite3.connect(f"file:{state_db}?mode=ro", uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT id FROM sessions WHERE ended_at IS NOT NULL "
+                "AND end_reason='session_reset' AND source != 'cron' "
+                "AND message_count >= 2 ORDER BY ended_at DESC LIMIT ?",
+                (max(1, min(limit, 500)),),
+            ).fetchall()
+        finally:
+            conn.close()
+        recovered = []
+        for (session_id,) in rows:
+            request_id = f"{session_id}:completed"
+            # Avoid re-running successful jobs; retryable early captures are
+            # requeued by submit() using the same idempotency key.
+            row = self._db.execute(
+                "SELECT payload FROM jobs WHERE request_id=?", (request_id,)
+            ).fetchone()
+            if row:
+                job = json.loads(row[0])
+                if not self._is_retryable_completed(job):
+                    continue
+            recovered.append(
+                self.submit(request_id=request_id, session_id=session_id)
+            )
+        return recovered
+
     def submit(self, request_id: str | None = None, session_id: str | None = None) -> dict[str, Any]:
         with self._lock:
             if request_id:

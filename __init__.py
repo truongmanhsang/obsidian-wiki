@@ -256,6 +256,47 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
         self._session_id = session_id
         self._get_vault().ensure_skeleton()
 
+    def on_session_finalize(self, **kwargs) -> None:
+        """Queue the old session when the host rotates/resets it.
+
+        Gateway resets use ``on_session_finalize`` rather than
+        ``on_session_end``.  The hook intentionally only submits work; the
+        central ingest manager performs capture after state.db has flushed.
+        """
+        session_id = str(kwargs.get("session_id") or "")
+        platform = str(kwargs.get("platform") or "")
+        if not session_id or session_id.startswith("cron_") or platform == "cron":
+            return
+        try:
+            request_id = f"{session_id}:completed"
+            logger.info(
+                "ObsidianWiki ingest boundary: event=on_session_finalize session=%s platform=%s",
+                session_id, platform or "unknown",
+            )
+            _run_async(_call_mcp(
+                self._mcp_url(),
+                "memory_ingest_submit",
+                {"request_id": request_id, "session_id": session_id},
+            ))
+            logger.info(
+                "ObsidianWiki ingest submitted: event=on_session_finalize session=%s request_id=%s",
+                session_id, request_id,
+            )
+        except Exception:
+            logger.warning(
+                "ObsidianWiki ingest submission failed: event=on_session_finalize session=%s",
+                session_id, exc_info=True,
+            )
+
+    def on_session_end(self, **kwargs) -> None:
+        """Submit completed sessions for hosts that emit only on_session_end."""
+        session_id = str(kwargs.get("session_id") or "")
+        platform = str(kwargs.get("platform") or "")
+        completed = kwargs.get("completed", True)
+        if not session_id or session_id.startswith("cron_") or platform == "cron" or not completed:
+            return
+        self.on_session_finalize(**kwargs)
+
     def shutdown(self) -> None:
         self._store = None
         self._vault = None
@@ -715,5 +756,8 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
 # ---------------------------------------------------------------------------
 
 def register(ctx) -> None:
-    """Register the obsidianwiki memory provider with the plugin system."""
-    ctx.register_memory_provider(ObsidianWikiMemoryProvider())
+    """Register the obsidianwiki provider and session-boundary hooks."""
+    provider = ObsidianWikiMemoryProvider()
+    ctx.register_memory_provider(provider)
+    ctx.register_hook("on_session_end", provider.on_session_end)
+    ctx.register_hook("on_session_finalize", provider.on_session_finalize)

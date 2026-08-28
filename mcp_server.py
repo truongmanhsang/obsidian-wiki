@@ -61,6 +61,12 @@ def _ingest_manager() -> IngestJobManager:
     global _manager
     if _manager is None:
         _manager = IngestJobManager(_store(prepare=True))
+        # Recover session_reset boundaries missed while Hermes or this server
+        # was restarting. Recovery is idempotent and runs once per process.
+        try:
+            _manager.recover_unsubmitted_boundaries()
+        except Exception:
+            pass
     return _manager
 
 

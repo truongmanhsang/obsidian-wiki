@@ -42,6 +42,50 @@ def test_default_vault_path_is_portable(monkeypatch, tmp_path):
     assert config.default_vault_path() == str(tmp_path / "Documents" / "agent-vault")
 
 
+def test_session_finalize_queues_old_session_without_cron(monkeypatch):
+    module = _load_module()
+    provider = module.ObsidianWikiMemoryProvider({"mcp_url": "http://127.0.0.1:8765/mcp"})
+    calls = []
+    monkeypatch.setattr(module, "_run_async", lambda coro: calls.append(coro))
+    provider.on_session_finalize(session_id="session-1", platform="telegram")
+    assert len(calls) == 1
+    calls[0].close()
+
+
+def test_session_finalize_ignores_cron(monkeypatch):
+    module = _load_module()
+    provider = module.ObsidianWikiMemoryProvider()
+    monkeypatch.setattr(module, "_run_async", lambda coro: (_ for _ in ()).throw(AssertionError()))
+    provider.on_session_finalize(session_id="cron_job_1", platform="cron")
+
+
+def test_session_end_queues_completed_old_session(monkeypatch):
+    module = _load_module()
+    provider = module.ObsidianWikiMemoryProvider({"mcp_url": "http://127.0.0.1:8765/mcp"})
+    calls = []
+    monkeypatch.setattr(module, "_run_async", lambda coro: calls.append(coro))
+    provider.on_session_end(
+        session_id="session-2", completed=True, platform="telegram",
+    )
+    assert len(calls) == 1
+    calls[0].close()
+
+
+def test_register_binds_both_boundary_hooks(monkeypatch):
+    module = _load_module()
+    calls = []
+
+    class Context:
+        def register_memory_provider(self, provider):
+            pass
+
+        def register_hook(self, name, callback):
+            calls.append((name, callback.__name__))
+
+    module.register(Context())
+    assert [name for name, _ in calls] == ["on_session_end", "on_session_finalize"]
+
+
 def test_schema_instructs_direct_wrapper(monkeypatch, tmp_path):
     provider = _load_provider_for_tests(tmp_path)
     description = provider.get_tool_schemas()[0]["description"]
