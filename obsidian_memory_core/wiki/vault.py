@@ -640,6 +640,30 @@ class WikiVault:
             "logged": True,
         }
 
+    def delete_page(self, rel: str, note: str = "") -> dict:
+        """Delete one curated markdown page and rebuild the catalog."""
+        path = self.safe_resolve(rel)
+        if path.suffix == "":
+            path = path.with_suffix(".md")
+        if path.suffix != ".md":
+            raise WikiVaultError("only .md pages are supported")
+        rel_path = path.relative_to(self.root)
+        if not rel_path.parts or rel_path.parts[0] not in {"entities", "people", "decisions", "environment", "concepts", "answers", "preferences"}:
+            raise WikiVaultError("only curated wiki pages can be deleted")
+        if not path.exists():
+            raise WikiVaultError(f"page not found: {rel}")
+        inbound = sorted(self._inbound_links(path.stem, exclude=path))
+        path.unlink()
+        self.rebuild_index()
+        self.append_log("DELETE", note or f"{rel_path.as_posix()} deleted")
+        return {
+            "status": "deleted",
+            "path": str(path),
+            "inbound_links": inbound,
+            "indexed": True,
+            "logged": True,
+        }
+
     def _inbound_links(self, stem: str, exclude: Path | None = None) -> set[str]:
         """Pages whose wikilinks resolve to `stem` (case-insensitive).
         Auto-generated backlink sections don't count (navigation UI)."""

@@ -164,6 +164,7 @@ WIKI_TOOL_SCHEMA = {
         "tools, systems) and concepts (lessons, workflows). Actions: read "
         "(full page), search (keyword scan), list (catalog from index.md), "
         "write (create/update a page - index and log update automatically), "
+        "delete (delete one curated page; requires the revision from read), "
         "reflect (synthesize relevant pages with the configured LLM), "
         "lint (orphans, broken links, contradictions), log (recent "
         "operations). Pages live in entities/, people/, decisions/, "
@@ -176,7 +177,7 @@ WIKI_TOOL_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["read", "search", "list", "write", "reflect", "lint", "log"],
+                "enum": ["read", "search", "list", "write", "delete", "reflect", "lint", "log"],
                 "description": "Wiki operation to perform.",
             },
             "page": {
@@ -602,6 +603,7 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                     "search": "memory_search",
                     "list": "memory_list",
                     "write": "memory_write",
+                    "delete": "memory_delete",
                     "reflect": "memory_reflect",
                     "lint": "memory_lint",
                     "log": "memory_log",
@@ -613,6 +615,7 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                         "search": {"query", "limit"},
                         "list": {"limit"},
                         "write": {"page", "content", "note", "expected_revision", "allow_duplicate"},
+                        "delete": {"page", "note", "expected_revision"},
                         "reflect": {"query", "limit"},
                         "lint": set(),
                         "log": {"limit"},
@@ -637,6 +640,8 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                 return self._handle_list(vault, args)
             if action == "write":
                 return self._handle_write(vault, args)
+            if action == "delete":
+                return self._handle_delete(vault, args)
             if action == "lint":
                 # --fix support: lint with fix=true auto-links orphans
                 if args.get("fix") or args.get("fix_orphans"):
@@ -748,6 +753,19 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
         result = self._store.write(page, content, note=args.get("note", ""),
                                    expected_revision=args.get("expected_revision"),
                                    allow_duplicate=allow_dup)
+        return json.dumps(result, ensure_ascii=False)
+
+    def _handle_delete(self, vault: WikiVault, args: dict) -> str:
+        page = args.get("page", "")
+        if not page:
+            return tool_error("delete requires 'page'")
+        if self._store is None:
+            self._store = MemoryStore(vault_path(self._config))
+        result = self._store.delete(
+            page,
+            expected_revision=args.get("expected_revision"),
+            note=args.get("note", ""),
+        )
         return json.dumps(result, ensure_ascii=False)
 
 

@@ -541,6 +541,26 @@ class TestWritePath:
                   content="# x\n\nnope nope nope\n")
         assert "error" in r and "read-only" in r["error"]
 
+    def test_delete_requires_revision_and_updates_index_log(self, provider):
+        created = _call(provider, action="write", page="entities/delete-me",
+                        content="# Delete Me\n\nTemporary page.\n")
+        revision = _call(provider, action="read", page="entities/delete-me")["revision"]
+        missing_revision = _call(provider, action="delete", page="entities/delete-me")
+        assert missing_revision["error"] == "revision_conflict"
+        deleted = _call(provider, action="delete", page="entities/delete-me",
+                        expected_revision=revision, note="test deletion")
+        assert deleted["status"] == "deleted"
+        assert not __import__("pathlib").Path(created["path"]).exists()
+        assert "delete-me" not in provider._get_vault().index_path.read_text(encoding="utf-8")
+        assert "DELETE:" in provider._get_vault().log_tail(30)
+
+    def test_delete_rejects_sources_and_stale_revision(self, provider):
+        _call(provider, action="write", page="entities/protected-delete",
+              content="# Protected Delete\n\nBody.\n")
+        stale = _call(provider, action="delete", page="entities/protected-delete",
+                      expected_revision="stale")
+        assert stale["error"] == "revision_conflict"
+
     def test_wrong_folder_type_conflicts(self, provider):
         r = _call(provider, action="write", page="answers/x",
                   content="---\ntype: entity\n---\n\n# X\n\nbody\n")

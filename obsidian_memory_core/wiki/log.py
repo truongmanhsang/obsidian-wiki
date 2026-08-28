@@ -167,7 +167,7 @@ def migrate_log_md_to_db(vault) -> int:
 # ---------------------------------------------------------------------------
 
 def append_log(vault, kind: str, description: str, quiet: bool = False) -> None:
-    kinds = {"SETUP", "INGEST", "QUERY", "LINT", "REFLECT", "WRITE", "UPDATE", "READ", "INDEX_REBUILT"}
+    kinds = {"SETUP", "INGEST", "QUERY", "LINT", "REFLECT", "WRITE", "UPDATE", "DELETE", "READ", "INDEX_REBUILT"}
     kind = kind.upper() if kind.upper() in kinds else "QUERY"
     today = date.today().isoformat()
     now_iso = datetime.now(timezone.utc).isoformat()

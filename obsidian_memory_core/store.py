@@ -123,6 +123,24 @@ class MemoryStore:
             result["revision"] = self._revision(page)
             return result
 
+    def delete(self, page: str, expected_revision: str | None = None, note: str = "") -> dict[str, Any]:
+        """Delete one curated page with optimistic concurrency protection."""
+        if not isinstance(page, str) or not page.strip():
+            raise MemoryWriteError("delete requires a page")
+        if page.split('/', 1)[0] == 'sources':
+            raise MemoryWriteError('sources/ is read-only')
+        with self._write_lock():
+            current = self._revision(page)
+            if current is None:
+                raise MemoryWriteError(f"page not found: {page}")
+            if expected_revision is None:
+                raise RevisionConflict(f"expected_revision is required when deleting {page}")
+            if current != expected_revision:
+                raise RevisionConflict(f"revision conflict for {page}; read the page again before deleting")
+            result = self.vault.delete_page(page, note=note)
+            result["revision"] = None
+            return result
+
     def write_ingest(self, page: str, content: str, note: str = "") -> dict[str, Any]:
         """Write a captured source through the shared lock and audit path."""
         if not isinstance(page, str) or not page.strip():
@@ -169,6 +187,7 @@ class MemoryStore:
         if action == "lint": return self.lint()
         if action == "log": return self.log(int(kwargs.get("limit", 30)))
         if action == "write": return self.write(kwargs["page"], kwargs["content"], kwargs.get("note", ""), kwargs.get("expected_revision"), bool(kwargs.get("allow_duplicate", False)))
+        if action == "delete": return self.delete(kwargs["page"], kwargs.get("expected_revision"), kwargs.get("note", ""))
         raise MemoryWriteError(f"unknown action: {action}")
 
 

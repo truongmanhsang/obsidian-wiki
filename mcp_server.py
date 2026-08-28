@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastmcp import FastMCP
 
-from obsidian_memory_core import IngestJobManager, MemoryStore, RevisionConflict
+from obsidian_memory_core import IngestJobManager, MemoryStore, RevisionConflict, MemoryWriteError
 from obsidian_memory_core.config import vault_path
 
 
@@ -142,6 +142,17 @@ def memory_write(
         return _store(prepare=True).write(page, content, note, expected_revision, allow_duplicate)
     except RevisionConflict as exc:
         return {"error": "revision_conflict", "message": str(exc)}
+
+
+@mcp.tool()
+def memory_delete(page: str, expected_revision: str | None = None, note: str = "") -> dict[str, Any]:
+    """Delete one curated wiki page; expected_revision is mandatory."""
+    try:
+        return _store(prepare=True).delete(page, expected_revision, note)
+    except RevisionConflict as exc:
+        return {"error": "revision_conflict", "message": str(exc)}
+    except MemoryWriteError as exc:
+        return {"error": "delete_failed", "message": str(exc)}
 
 
 @mcp.tool()
