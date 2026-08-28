@@ -113,6 +113,10 @@ class MemoryStore:
             raise MemoryWriteError("write requires non-empty content")
         if page.split('/', 1)[0] == 'sources':
             raise MemoryWriteError('sources/ is read-only')
+        # MCP clients may serialize an omitted optional string as "".
+        # Treat that sentinel as no revision, which is valid for creation;
+        # a real revision is always a non-empty SHA-256 string.
+        expected_revision = expected_revision or None
         with self._write_lock():
             current = self._revision(page)
             if current is not None and expected_revision is None:

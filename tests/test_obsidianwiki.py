@@ -269,6 +269,19 @@ def test_vault_path_precedence(monkeypatch, tmp_path):
     assert config.vault_path({}) == str(tmp_path / "portable-vault")
 
 
+def test_empty_expected_revision_is_treated_as_create(tmp_path):
+    from obsidian_memory_core import MemoryStore
+
+    store = MemoryStore(tmp_path / "vault")
+    store.ensure_ready()
+    created = store.write(
+        "concepts/empty-revision-create",
+        "# Empty Revision Create\n\nA new page must accept an empty revision marker.\n",
+        expected_revision="",
+    )
+    assert created["status"] == "created"
+
+
 def test_shared_core_write_revision_and_lock(tmp_path):
     from obsidian_memory_core import MemoryStore
 
