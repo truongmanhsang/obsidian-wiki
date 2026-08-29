@@ -67,7 +67,8 @@ Use the native MCP tools:
 - `memory_read(page)` — read one page completely and obtain its revision.
 - `memory_reflect(query, limit)` — synthesize relevant pages with the configured LLM.
 - `memory_list(limit)` — inspect catalog and page statistics.
-- `memory_write(page, content, note, expected_revision)` — create or update a curated page.
+- `memory_write(page, content, note, expected_revision)` — create or replace a curated page. **Warning: `write` replaces the entire page; it does not append.**
+- `memory_append(page, content, note, expected_revision)` — append only new content to an existing curated page while preserving previous content. Requires the current revision; duplicate content is a no-op, and a payload containing the entire previous page is rejected.
 - `memory_lint()` — check broken links, orphan pages, duplicates, and stale claims.
 - `memory_log(limit)` — inspect recent wiki operations.
 
@@ -125,12 +126,14 @@ For an existing page:
 
 1. Call `memory_read(page)`.
 2. Keep the returned `revision` unchanged while preparing the update.
-3. Merge the new information into the complete page content without deleting valid sections.
-4. Call `memory_write(..., expected_revision=<revision>)`.
-5. If a revision conflict occurs, read the page again, merge again, and retry once.
+3. Choose the operation deliberately:
+   - Use `memory_append` when adding a new section or fact. Send **only the new content**, never the full page.
+   - Use `memory_write` only when replacing the complete page with a full merged document.
+4. Pass `expected_revision=<revision>` to the write/append operation.
+5. If a revision conflict occurs, read the page again, merge or re-prepare, and retry once.
 6. Verify the final page with `memory_read(page)`.
 
-Never bypass optimistic concurrency and never overwrite a page blindly.
+`memory_append` is protected against repeated identical content and rejects a payload containing the entire previous page. Never bypass optimistic concurrency and never overwrite a page blindly.
 
 ## Sources are read-only
 
