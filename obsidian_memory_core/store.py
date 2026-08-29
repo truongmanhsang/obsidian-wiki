@@ -145,6 +145,52 @@ class MemoryStore:
             result["revision"] = None
             return result
 
+    def append(self, page: str, content: str, note: str = "", expected_revision: str | None = None) -> dict[str, Any]:
+        """Append content to an existing curated page without replacing it."""
+        if not isinstance(page, str) or not page.strip():
+            raise MemoryWriteError("append requires a page")
+        if not isinstance(content, str) or not content.strip():
+            raise MemoryWriteError("append requires non-empty content")
+        if page.split('/', 1)[0] == 'sources':
+            raise MemoryWriteError('sources/ is read-only')
+        expected_revision = expected_revision or None
+        with self._write_lock():
+            current = self._revision(page)
+            if current is None:
+                raise MemoryWriteError(f"page not found: {page}")
+            if expected_revision is None:
+                raise RevisionConflict(f"expected_revision is required when appending {page}")
+            if current != expected_revision:
+                raise RevisionConflict(f"revision conflict for {page}; read the page again before appending")
+            path = self._page_path(page)
+            previous = path.read_text(encoding="utf-8")
+            previous_stripped = previous.strip()
+            content_stripped = content.strip()
+
+            # Protect against AGY accidentally sending the full page to append.
+            # The existing page must not be duplicated or rewritten as an append.
+            if previous_stripped and previous_stripped in content_stripped:
+                raise MemoryWriteError(
+                    "append content appears to contain the entire existing page; "
+                    "send only the new section"
+                )
+
+            # Make repeated identical append requests idempotent. Return the
+            # current revision without touching the file, index, or log.
+            if content_stripped and content_stripped in previous_stripped:
+                return {
+                    "status": "unchanged",
+                    "path": str(path),
+                    "reason": "content_already_present",
+                    "revision": current,
+                }
+
+            separator = "" if previous.endswith("\n\n") else "\n"
+            merged = previous + separator + content.lstrip("\n")
+            result = self.vault.write_page(page, merged, note=note, allow_duplicate=True)
+            result["revision"] = self._revision(page)
+            return result
+
     def write_ingest(self, page: str, content: str, note: str = "") -> dict[str, Any]:
         """Write a captured source through the shared lock and audit path."""
         if not isinstance(page, str) or not page.strip():
@@ -191,6 +237,7 @@ class MemoryStore:
         if action == "lint": return self.lint()
         if action == "log": return self.log(int(kwargs.get("limit", 30)))
         if action == "write": return self.write(kwargs["page"], kwargs["content"], kwargs.get("note", ""), kwargs.get("expected_revision"), bool(kwargs.get("allow_duplicate", False)))
+        if action == "append": return self.append(kwargs["page"], kwargs["content"], kwargs.get("note", ""), kwargs.get("expected_revision"))
         if action == "delete": return self.delete(kwargs["page"], kwargs.get("expected_revision"), kwargs.get("note", ""))
         raise MemoryWriteError(f"unknown action: {action}")
 

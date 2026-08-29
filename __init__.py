@@ -158,6 +158,7 @@ WIKI_TOOL_SCHEMA = {
     "name": "obsidian_wiki",
     "description": (
         "Direct wrapper for reading and writing the agent's long-term Obsidian wiki. "
+        "WARNING: write replaces the entire page; use append to add content safely. "
         "Always call this obsidian_wiki tool directly; do not use tool_search, "
         "tool_describe, tool_call, or the raw mcp__obsidian_wiki__* tools. The wiki is the "
         "source of truth for durable knowledge about entities (projects, "
@@ -177,7 +178,7 @@ WIKI_TOOL_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["read", "search", "list", "write", "delete", "reflect", "lint", "log"],
+                "enum": ["read", "search", "list", "write", "append", "delete", "reflect", "lint", "log"],
                 "description": "Wiki operation to perform.",
             },
             "page": {
@@ -439,8 +440,10 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                 "[[people/example|Example]]. Avoid orphan pages.",
                 "- index.md and log.md are maintained automatically; never "
                 "hand-edit them through other tools mid-session.",
-                "- For reusable synthesized comparisons, rankings, or 'which is "
-                "best' answers, save/update an answers/ page with comparison, "
+                "- `write` replaces the entire page; use `append` to add content "
+                "without deleting existing content. For updates, read first and "
+                "pass expected_revision. For reusable synthesized comparisons, "
+                "rankings, or 'which is best' answers, save/update an answers/ page with comparison, "
                 "recommendation, alternatives, and sources.",
                 "- Never store passwords, API keys, tokens, or other secrets in "
                 "the wiki. Run action=lint when checking vault health.",
@@ -603,6 +606,7 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                     "search": "memory_search",
                     "list": "memory_list",
                     "write": "memory_write",
+                    "append": "memory_append",
                     "delete": "memory_delete",
                     "reflect": "memory_reflect",
                     "lint": "memory_lint",
@@ -615,6 +619,7 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                         "search": {"query", "limit"},
                         "list": {"limit"},
                         "write": {"page", "content", "note", "expected_revision", "allow_duplicate"},
+                        "append": {"page", "content", "note", "expected_revision"},
                         "delete": {"page", "note", "expected_revision"},
                         "reflect": {"query", "limit"},
                         "lint": set(),
@@ -640,6 +645,8 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                 return self._handle_list(vault, args)
             if action == "write":
                 return self._handle_write(vault, args)
+            if action == "append":
+                return self._handle_append(vault, args)
             if action == "delete":
                 return self._handle_delete(vault, args)
             if action == "lint":
@@ -753,6 +760,19 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
         result = self._store.write(page, content, note=args.get("note", ""),
                                    expected_revision=args.get("expected_revision"),
                                    allow_duplicate=allow_dup)
+        return json.dumps(result, ensure_ascii=False)
+
+    def _handle_append(self, vault: WikiVault, args: dict) -> str:
+        page = args.get("page", "")
+        content = args.get("content", "")
+        if not page:
+            return tool_error("append requires 'page'")
+        if self._store is None:
+            self._store = MemoryStore(vault_path(self._config))
+        result = self._store.append(
+            page, content, note=args.get("note", ""),
+            expected_revision=args.get("expected_revision"),
+        )
         return json.dumps(result, ensure_ascii=False)
 
     def _handle_delete(self, vault: WikiVault, args: dict) -> str:

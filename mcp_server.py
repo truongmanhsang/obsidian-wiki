@@ -145,6 +145,24 @@ def memory_write(
 
 
 @mcp.tool()
+def memory_append(
+    page: str,
+    content: str,
+    note: str = "",
+    expected_revision: str | None = None,
+) -> dict[str, Any]:
+    """Append to an existing page without replacing its previous content."""
+    try:
+        return _store(prepare=True).append(page, content, note, expected_revision)
+    except RevisionConflict as exc:
+        return {"error": "revision_conflict", "message": str(exc)}
+    except MemoryWriteError as exc:
+        return {"error": "append_failed", "message": str(exc)}
+    except Exception as exc:
+        return {"error": "append_failed", "message": str(exc)}
+
+
+@mcp.tool()
 def memory_delete(page: str, expected_revision: str | None = None, note: str = "") -> dict[str, Any]:
     """Delete one curated wiki page; expected_revision is mandatory."""
     try:

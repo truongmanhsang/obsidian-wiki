@@ -438,7 +438,7 @@ def test_mcp_exposes_read_and_write_tools():
     from mcp_server import mcp
 
     names = {tool.name for tool in asyncio.run(mcp.list_tools())}
-    assert {"memory_search", "memory_reflect", "memory_read", "memory_write", "memory_ingest_submit", "memory_ingest_status"}.issubset(names)
+    assert {"memory_search", "memory_reflect", "memory_read", "memory_write", "memory_append", "memory_ingest_submit", "memory_ingest_status"}.issubset(names)
 
 
 def test_mcp_reflect_tool_returns_grounded_sources(monkeypatch, tmp_path):
@@ -587,6 +587,57 @@ class TestWritePath:
     def test_short_content_rejected(self, provider):
         r = _call(provider, action="write", page="entities/x", content="# x\n")
         assert "error" in r
+
+    def test_append_preserves_existing_content_and_requires_revision(self, provider):
+        _call(provider, action="write", page="concepts/append-me",
+              content="# Append Me\n\nOriginal content.\n")
+        revision = _call(provider, action="read", page="concepts/append-me")["revision"]
+        appended = _call(provider, action="append", page="concepts/append-me",
+                         content="## New Findings\n\nAppended content.\n",
+                         expected_revision=revision)
+        assert appended["status"] == "updated"
+        result = _call(provider, action="read", page="concepts/append-me")
+        assert "Original content." in result["content"]
+        assert "## New Findings" in result["content"]
+        assert "Appended content." in result["content"]
+        assert result["content"].index("Original content.") < result["content"].index("Appended content.")
+
+        missing_revision = _call(provider, action="append", page="concepts/append-me",
+                                 content="Should be rejected.\n")
+        assert missing_revision["error"] == "revision_conflict"
+
+    def test_append_rejects_missing_page(self, provider):
+        result = _call(provider, action="append", page="concepts/does-not-exist",
+                       content="New content.\n", expected_revision="anything")
+        assert "error" in result
+
+    def test_append_is_idempotent_for_existing_content(self, provider):
+        _call(provider, action="write", page="concepts/append-idempotent",
+              content="# Append Idempotent\n\nOriginal content.\n")
+        revision = _call(provider, action="read", page="concepts/append-idempotent")["revision"]
+        first = _call(provider, action="append", page="concepts/append-idempotent",
+                      content="## Finding\n\nThe same finding.\n",
+                      expected_revision=revision)
+        second_revision = _call(provider, action="read", page="concepts/append-idempotent")["revision"]
+        second = _call(provider, action="append", page="concepts/append-idempotent",
+                       content="## Finding\n\nThe same finding.\n",
+                       expected_revision=second_revision)
+        result = _call(provider, action="read", page="concepts/append-idempotent")
+        assert first["status"] == "updated"
+        assert second["status"] == "unchanged"
+        assert result["content"].count("The same finding.") == 1
+        assert second["revision"] == second_revision
+
+    def test_append_rejects_payload_containing_entire_previous_page(self, provider):
+        _call(provider, action="write", page="concepts/append-full-page",
+              content="# Append Full Page\n\nOriginal content.\n")
+        old = _call(provider, action="read", page="concepts/append-full-page")
+        accidental_payload = old["content"] + "\n## New Finding\n\nMore content.\n"
+        result = _call(provider, action="append", page="concepts/append-full-page",
+                       content=accidental_payload, expected_revision=old["revision"])
+        assert "entire existing page" in result["error"]
+        verified = _call(provider, action="read", page="concepts/append-full-page")
+        assert verified["content"].count("Original content.") == 1
 
     def test_update_stamps_new_date(self, provider):
         _call(provider, action="write", page="entities/a1",
