@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import tempfile
 import unicodedata
 from datetime import date
 from pathlib import Path
@@ -18,6 +20,28 @@ from obsidian_memory_core.wiki.lint import lint as _lint_fn, _hub_for_orphan as 
 from obsidian_memory_core.wiki.search import search as _search_fn, prefetch_context as _prefetch_fn
 
 logger = logging.getLogger(__name__)
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Replace a curated page in one filesystem operation.
+
+    This avoids exposing partially-written files to iCloud/Obsidian watchers,
+    which can otherwise race a normal ``write_text`` and restore stale bytes.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+            fh.write(content)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
 
 # Re-export for backward compat
 WIKILINK_RE = WIKILINK_RE
@@ -556,7 +580,7 @@ class WikiVault:
 
         is_new = not path.exists()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        _atomic_write_text(path, content)
 
         # Auto-backlinks: maintain a "Linked from" section on every curated
         # page touched by this write - the page itself AND every page it
@@ -582,9 +606,9 @@ class WikiVault:
                     # No inbound: remove previous backlink section if it existed, preserve frontmatter
                     if f"\n{header}" in raw or header in raw:
                         if fm_text:
-                            target_path.write_text(fm_text + body, encoding="utf-8")
+                            _atomic_write_text(target_path, fm_text + body)
                         else:
-                            target_path.write_text(body, encoding="utf-8")
+                            _atomic_write_text(target_path, body)
                     return
                 lines = [header, ""]
                 for src_rel in inbound:
@@ -594,9 +618,9 @@ class WikiVault:
                     body += "\n"
                 new_body = body + "\n" + "\n".join(lines) + "\n"
                 if fm_text:
-                    target_path.write_text(fm_text + new_body, encoding="utf-8")
+                    _atomic_write_text(target_path, fm_text + new_body)
                 else:
-                    target_path.write_text(new_body, encoding="utf-8")
+                    _atomic_write_text(target_path, new_body)
 
             _refresh_backlinks(path)
             # resolve linked stems against ALL pages (any folder), then

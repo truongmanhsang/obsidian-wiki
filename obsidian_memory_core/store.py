@@ -185,9 +185,29 @@ class MemoryStore:
                     "revision": current,
                 }
 
-            separator = "" if previous.endswith("\n\n") else "\n"
-            merged = previous + separator + content.lstrip("\n")
+            # ``write_page`` regenerates the auto-managed backlink section by
+            # removing everything from ``## Linked from`` onward. Insert new
+            # content before that section, otherwise the append is silently
+            # discarded during backlink maintenance.
+            backlink_header = "\n## Linked from\n"
+            backlink_at = previous.find(backlink_header)
+            if backlink_at >= 0:
+                body = previous[:backlink_at].rstrip()
+                backlinks = previous[backlink_at:]
+                merged = body + "\n\n" + content.strip() + "\n\n" + backlinks.lstrip("\n")
+            else:
+                separator = "" if previous.endswith("\n\n") else "\n"
+                merged = previous + separator + content.lstrip("\n")
             result = self.vault.write_page(page, merged, note=note, allow_duplicate=True)
+            # A synced vault can be rewritten by another filesystem actor
+            # immediately after write_page() returns. Never report success
+            # unless the requested append is present in the bytes on disk.
+            persisted = path.read_text(encoding="utf-8")
+            if content_stripped not in persisted.strip():
+                raise MemoryWriteError(
+                    f"append write did not persist for {page}; "
+                    "the page may have been overwritten by another writer"
+                )
             result["revision"] = self._revision(page)
             return result
 

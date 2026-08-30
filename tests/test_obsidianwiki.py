@@ -639,6 +639,43 @@ class TestWritePath:
         verified = _call(provider, action="read", page="concepts/append-full-page")
         assert verified["content"].count("Original content.") == 1
 
+    def test_append_rejects_a_write_that_does_not_persist(self, tmp_path):
+        from obsidian_memory_core.store import MemoryStore, MemoryWriteError
+
+        store = MemoryStore(str(tmp_path / "vault"))
+        store.ensure_ready()
+        store.write("concepts/persist-check", "# Persist Check\n\nOriginal content.\n")
+        page = store.read("concepts/persist-check")
+        original_write_page = store.vault.write_page
+
+        def write_then_restore(*args, **kwargs):
+            result = original_write_page(*args, **kwargs)
+            path = store._page_path("concepts/persist-check")
+            path.write_text(page["content"], encoding="utf-8")
+            return result
+
+        store.vault.write_page = write_then_restore
+        with pytest.raises(MemoryWriteError, match="did not persist"):
+            store.append(
+                "concepts/persist-check",
+                "## New Finding\n\nAppended content.\n",
+                expected_revision=page["revision"],
+            )
+
+    def test_append_preserves_content_when_page_has_auto_backlinks(self, provider):
+        _call(provider, action="write", page="concepts/append-with-backlinks",
+              content="# Append With Backlinks\n\nOriginal content.\n")
+        _call(provider, action="write", page="concepts/append-link-source",
+              content="# Append Link Source\n\n[[concepts/append-with-backlinks]]\n")
+        old = _call(provider, action="read", page="concepts/append-with-backlinks")
+        result = _call(provider, action="append", page="concepts/append-with-backlinks",
+                       content="## New Finding\n\nAppended content.\n",
+                       expected_revision=old["revision"])
+        assert result["status"] == "updated"
+        verified = _call(provider, action="read", page="concepts/append-with-backlinks")
+        assert "Appended content." in verified["content"]
+        assert verified["content"].index("Appended content.") < verified["content"].index("## Linked from")
+
     def test_update_stamps_new_date(self, provider):
         _call(provider, action="write", page="entities/a1",
               content="# A1\n\nfirst body\n")
