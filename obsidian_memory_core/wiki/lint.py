@@ -16,21 +16,21 @@ def _hub_for_orphan(vault, orphan_rel: str, title: str = "", ptype: str = "") ->
         except Exception:
             ptype = ""
     hub_by_type = {
-        "entity": "concepts/obsidian-wiki-memory-system.md",
-        "person": "concepts/obsidian-wiki-memory-system.md",
-        "concept": "concepts/obsidian-wiki-memory-system.md",
-        "decision": "concepts/obsidian-wiki-memory-system.md",
-        "answer": "concepts/obsidian-wiki-memory-system.md",
-        "preference": "concepts/obsidian-wiki-memory-system.md",
+        "entity": "concepts/obsidian-wiki-index.md",
+        "person": "concepts/obsidian-wiki-index.md",
+        "concept": "concepts/obsidian-wiki-index.md",
+        "decision": "concepts/obsidian-wiki-index.md",
+        "answer": "concepts/obsidian-wiki-index.md",
+        "preference": "concepts/obsidian-wiki-index.md",
         "environment": "environment/obsidian-vault.md",
-        "source": "concepts/obsidian-wiki-memory-system.md",
+        "source": "concepts/obsidian-wiki-index.md",
     }
-    hub = hub_by_type.get(ptype, "concepts/obsidian-wiki-memory-system.md")
+    hub = hub_by_type.get(ptype, "concepts/obsidian-wiki-index.md")
     if not (vault.root / hub).exists():
         fallback = "environment/obsidian-vault.md"
         if (vault.root / fallback).exists():
             return fallback
-        return "concepts/obsidian-wiki-memory-system.md"
+        return "concepts/obsidian-wiki-index.md"
     return hub
 
 def lint(vault) -> dict:
@@ -46,9 +46,12 @@ def fix_orphans(vault, dry_run: bool = False) -> dict:
         return {"orphans": 0, "fixed": 0, "dry_run": dry_run, "plan": [], "hubs": {}}
     pages = vault.load_pages()
     by_rel = {p["rel"]: p for p in pages}
+    orphan_hub = "concepts/obsidian-wiki-index.md"
     hub_groups = {}
     plan = []
     for rel in sorted(orphans):
+        if rel == orphan_hub:
+            continue
         pg = by_rel.get(rel, {})
         title = pg.get("title") or Path(rel).stem
         ptype = pg.get("ptype") or ""
@@ -56,9 +59,9 @@ def fix_orphans(vault, dry_run: bool = False) -> dict:
         summary = first_summary_line(body) if body else "(auto-linked orphan)"
         hub = _hub_for_orphan(vault, rel, title=title, ptype=ptype)
         if hub == rel:
-            hub = "concepts/obsidian-wiki-memory-system.md"
+            hub = "concepts/obsidian-wiki-index.md"
         if not (vault.root / hub).exists():
-            fallback = "concepts/obsidian-wiki-memory-system.md"
+            fallback = "concepts/obsidian-wiki-index.md"
             if (vault.root / fallback).exists():
                 hub = fallback
             else:

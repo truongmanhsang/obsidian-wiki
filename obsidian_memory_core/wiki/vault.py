@@ -48,6 +48,11 @@ WIKILINK_RE = WIKILINK_RE
 FRONTMATTER_RE = FRONTMATTER_RE
 TOKEN_RE = TOKEN_RE
 
+# The overview is a stable entry point, not a backlink catalog. Its inbound
+# links are still counted by lint/search, but the generated section is kept on
+# the dedicated index hub so the overview remains readable.
+BACKLINK_EXCLUDED_PAGES = {"concepts/obsidian-wiki-memory-system.md"}
+
 TYPE_DIRS = {
     "entity": "entities",
     "person": "people",
@@ -592,6 +597,14 @@ class WikiVault:
                 m = FRONTMATTER_RE.match(raw)
                 fm_text = m.group(0) if m else ""
                 body = raw[m.end():] if m else raw
+                if target_path.relative_to(self.root).as_posix() in BACKLINK_EXCLUDED_PAGES:
+                    if "\n## Linked from" in body:
+                        body = body[:body.index("\n## Linked from")].rstrip() + "\n"
+                    elif body.lstrip().startswith("## Linked from"):
+                        body = body[body.find("## Linked from"):]
+                        body = "\n" if not body else "\n"
+                    _atomic_write_text(target_path, fm_text + body)
+                    return
                 stem = target_path.stem
                 inbound = sorted(self._inbound_links(stem))
                 header = "## Linked from"
@@ -1315,22 +1328,22 @@ class WikiVault:
                 ptype = ""
         # Generic type -> hub mapping. All vaults have these hubs; no domain-specific keywords.
         hub_by_type = {
-            "entity": "concepts/obsidian-wiki-memory-system.md",
-            "person": "concepts/obsidian-wiki-memory-system.md",
-            "concept": "concepts/obsidian-wiki-memory-system.md",
-            "decision": "concepts/obsidian-wiki-memory-system.md",
-            "answer": "concepts/obsidian-wiki-memory-system.md",
-            "preference": "concepts/obsidian-wiki-memory-system.md",
+            "entity": "concepts/obsidian-wiki-index.md",
+            "person": "concepts/obsidian-wiki-index.md",
+            "concept": "concepts/obsidian-wiki-index.md",
+            "decision": "concepts/obsidian-wiki-index.md",
+            "answer": "concepts/obsidian-wiki-index.md",
+            "preference": "concepts/obsidian-wiki-index.md",
             "environment": "environment/obsidian-vault.md",
-            "source": "concepts/obsidian-wiki-memory-system.md",
+            "source": "concepts/obsidian-wiki-index.md",
         }
-        hub = hub_by_type.get(ptype, "concepts/obsidian-wiki-memory-system.md")
+        hub = hub_by_type.get(ptype, "concepts/obsidian-wiki-index.md")
         # Fallback if hub file missing (e.g. fresh vault without that hub) -> use vault root hub that always exists
         if not (self.root / hub).exists():
             fallback = "environment/obsidian-vault.md"
             if (self.root / fallback).exists():
                 return fallback
-            return "concepts/obsidian-wiki-memory-system.md"
+            return "concepts/obsidian-wiki-index.md"
         return hub
 
     def fix_orphans(self, dry_run: bool = False) -> dict:
@@ -1341,9 +1354,12 @@ class WikiVault:
             return {"orphans": 0, "fixed": 0, "dry_run": dry_run, "plan": [], "hubs": {}}
         pages = self.load_pages()
         by_rel = {p["rel"]: p for p in pages}
+        orphan_hub = "concepts/obsidian-wiki-index.md"
         hub_groups = {}
         plan = []
         for rel in sorted(orphans):
+            if rel == orphan_hub:
+                continue
             pg = by_rel.get(rel, {})
             title = pg.get("title") or Path(rel).stem
             ptype = pg.get("ptype") or ""
@@ -1351,9 +1367,9 @@ class WikiVault:
             summary = first_summary_line(body) if body else "(auto-linked orphan)"
             hub = self._hub_for_orphan(rel, title=title, ptype=ptype)
             if hub == rel:
-                hub = "concepts/obsidian-wiki-memory-system.md"
+                hub = "concepts/obsidian-wiki-index.md"
             if not (self.root / hub).exists():
-                fallback = "concepts/obsidian-wiki-memory-system.md"
+                fallback = "concepts/obsidian-wiki-index.md"
                 if (self.root / fallback).exists():
                     hub = fallback
                 else:

@@ -528,6 +528,14 @@ def _call(p, **args):
 
 
 class TestWritePath:
+    def test_memory_system_overview_does_not_accumulate_generated_backlinks(self, provider):
+        _call(provider, action="write", page="concepts/obsidian-wiki-memory-system",
+              content="# Obsidian Wiki Memory System\n\nOverview.\n")
+        _call(provider, action="write", page="entities/overview-client",
+              content="# Overview Client\n\nLinks to [[concepts/obsidian-wiki-memory-system]].\n")
+        overview = provider._get_vault().root / "concepts/obsidian-wiki-memory-system.md"
+        assert "## Linked from" not in overview.read_text(encoding="utf-8")
+
     def test_write_creates_page_with_derived_frontmatter(self, provider):
         r = _call(provider, action="write", page="entities/A",
                   content="# A\n\nSome body line.\n")
@@ -767,6 +775,13 @@ class TestReadSearch:
 
 
 class TestLint:
+    def test_orphan_fix_uses_dedicated_memory_index_hub(self, provider):
+        _call(provider, action="write", page="concepts/obsidian-wiki-index",
+              content="# Obsidian Wiki Index\n\nNavigation.\n")
+        assert provider._get_vault()._hub_for_orphan(
+            "entities/memcheck.md", ptype="entity"
+        ) == "concepts/obsidian-wiki-index.md"
+
     def test_orphan_and_broken_link_detected(self, provider):
         # lone page with a link to nowhere
         _call(provider, action="write", page="entities/lone",
