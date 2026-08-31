@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import re
 import os
-import sqlite3
 from datetime import date, datetime, timezone
 from pathlib import Path
+from sqlalchemy import create_engine, event, func, select
+from sqlalchemy.orm import Session
+from obsidian_memory_core.db.models import LogEntry
+from obsidian_memory_core.db.migrations import LOG_MIGRATION_DIR, upgrade
 
 LOG_HEADER = """# Wiki Operation Log
 
@@ -21,45 +24,36 @@ Maintained automatically by the obsidianwiki memory plugin.
 def _db_path(vault) -> Path:
     return vault.root / "log.db"
 
-def _connect(vault) -> sqlite3.Connection:
+def _engine(vault):
     db = _db_path(vault)
     if not db.exists():
         db.parent.mkdir(parents=True, exist_ok=True)
         db.touch(mode=0o600)
     else:
         os.chmod(db, 0o600)
-    # timeout=5 handles iCloud lock; check_same_thread False for safety
-    conn = sqlite3.connect(str(db), timeout=5, check_same_thread=False, isolation_level=None)
-    # WAL mode + normal sync for concurrency + iCloud safety
-    try:
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        conn.execute("PRAGMA busy_timeout=5000;")
-    except Exception:
-        pass
-    return conn
+    engine = create_engine(
+        f"sqlite:///{db}",
+        connect_args={"timeout": 5, "check_same_thread": False},
+    )
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _):
+        for pragma in ("PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA busy_timeout=5000"):
+            try:
+                dbapi_conn.execute(pragma)
+            except Exception:
+                pass
+    return engine
 
 def _ensure_db(vault) -> None:
     db = _db_path(vault)
     # ensure parent exists
     db.parent.mkdir(parents=True, exist_ok=True)
-    conn = _connect(vault)
+    engine = _engine(vault)
     try:
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                message TEXT NOT NULL,
-                is_auto INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL
-            );"""
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_date_kind ON logs(date, kind);")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_kind_auto ON logs(kind, is_auto);")
-        conn.commit()
+        with engine.connect() as conn:
+            upgrade(conn.connection, LOG_MIGRATION_DIR)
     finally:
-        conn.close()
+        engine.dispose()
 
 def _format_line(row) -> str:
     # row: (date, kind, message, is_auto)
@@ -70,12 +64,13 @@ def _format_line(row) -> str:
 def _sync_markdown_view(vault) -> None:
     """Regenerate log.md from DB (read-only view for Obsidian)."""
     _ensure_db(vault)
-    conn = _connect(vault)
+    engine = _engine(vault)
     try:
-        cur = conn.execute("SELECT date, kind, message, is_auto FROM logs ORDER BY id ASC;")
-        rows = cur.fetchall()
+        with Session(engine) as session:
+            rows = session.scalars(select(LogEntry).order_by(LogEntry.id.asc())).all()
+            rows = [(r.date, r.kind, r.message, r.is_auto) for r in rows]
     finally:
-        conn.close()
+        engine.dispose()
     lines = [LOG_HEADER.rstrip(), ""]
     for r in rows:
         lines.append(_format_line(r))
@@ -100,23 +95,21 @@ def migrate_log_md_to_db(vault) -> int:
     Returns number of rows inserted. Idempotent: if log.db already has rows, skips.
     """
     md_path = vault.log_path  # log.md
-    db_path = _db_path(vault)
     if not md_path.exists():
         _ensure_db(vault)
         return 0
     _ensure_db(vault)
     # if DB already has data, assume already migrated (avoid double insert)
-    conn = _connect(vault)
+    engine = _engine(vault)
     try:
-        cur = conn.execute("SELECT COUNT(*) FROM logs;")
-        cnt = cur.fetchone()[0]
-        if cnt and cnt > 0:
-            # still ensure markdown view is synced; if log.md is newer than bak, keep it
-            # but don't re-migrate
-            return 0
+        with Session(engine) as session:
+            cnt = session.scalar(select(func.count()).select_from(LogEntry))
     finally:
-        conn.close()
-
+        engine.dispose()
+    if cnt and cnt > 0:
+        # still ensure markdown view is synced; if log.md is newer than bak, keep it
+        # but don't re-migrate
+        return 0
     text = md_path.read_text(encoding="utf-8", errors="ignore")
     lines = text.splitlines()
     rows = []
@@ -139,15 +132,13 @@ def migrate_log_md_to_db(vault) -> int:
         # empty vault: just ensure DB and backup
         pass
     else:
-        conn = _connect(vault)
+        engine = _engine(vault)
         try:
-            conn.executemany(
-                "INSERT INTO logs (date, kind, message, is_auto, created_at) VALUES (?, ?, ?, ?, ?);",
-                rows,
-            )
-            conn.commit()
+            with Session(engine) as session:
+                session.add_all([LogEntry(date=d, kind=k, message=m, is_auto=bool(a), created_at=created) for d, k, m, a, created in rows])
+                session.commit()
         finally:
-            conn.close()
+            engine.dispose()
 
     # backup original
     bak = md_path.with_suffix(".md.bak")
@@ -183,55 +174,40 @@ def append_log(vault, kind: str, description: str, quiet: bool = False) -> None:
         _ensure_db(vault)
         # if log.md exists but db empty, migrate (covers ensure_skeleton race)
         if vault.log_path.exists():
-            conn = _connect(vault)
+            engine = _engine(vault)
             try:
-                cur = conn.execute("SELECT COUNT(*) FROM logs;")
-                cnt = cur.fetchone()[0]
+                with Session(engine) as session:
+                    cnt = session.scalar(select(func.count()).select_from(LogEntry))
             finally:
-                conn.close()
+                engine.dispose()
             if cnt == 0:
                 try:
                     migrate_log_md_to_db(vault)
                 except Exception:
                     pass
 
-    conn = _connect(vault)
+    engine = _engine(vault)
     try:
-        if not quiet:
-            conn.execute(
-                "INSERT INTO logs (date, kind, message, is_auto, created_at) VALUES (?, ?, ?, ?, ?);",
-                (today, kind, description, 0, now_iso),
-            )
-            conn.commit()
-        else:
-            # quiet: aggregate into single daily auto line per kind
-            cur = conn.execute(
-                "SELECT id, message FROM logs WHERE date=? AND kind=? AND is_auto=1 ORDER BY id DESC LIMIT 1;",
-                (today, kind),
-            )
-            row = cur.fetchone()
-            if row is not None:
-                rid, msg = row
-                m = re.search(r"\b(\d+) ops\b", msg)
-                count = int(m.group(1)) if m else 0
-                if kind == "INDEX_REBUILT":
-                    new_msg = description
-                else:
-                    new_msg = f"{count + 1} ops (latest: {description[:80]})"
-                conn.execute(
-                    "UPDATE logs SET message=?, created_at=? WHERE id=?;",
-                    (new_msg, now_iso, rid),
-                )
-                conn.commit()
+        with Session(engine) as session:
+            if not quiet:
+                session.add(LogEntry(date=today, kind=kind, message=description, is_auto=False, created_at=now_iso))
             else:
-                new_msg = f"1 ops (latest: {description[:80]})"
-                conn.execute(
-                    "INSERT INTO logs (date, kind, message, is_auto, created_at) VALUES (?, ?, ?, ?, ?);",
-                    (today, kind, new_msg, 1, now_iso),
-                )
-                conn.commit()
+                # quiet: aggregate into single daily auto line per kind
+                entry = session.scalars(select(LogEntry).where(LogEntry.date == today, LogEntry.kind == kind, LogEntry.is_auto.is_(True)).order_by(LogEntry.id.desc()).limit(1)).first()
+                if entry is not None:
+                    msg = entry.message
+                    m = re.search(r"\b(\d+) ops\b", msg)
+                    count = int(m.group(1)) if m else 0
+                    if kind == "INDEX_REBUILT":
+                        new_msg = description
+                    else:
+                        new_msg = f"{count + 1} ops (latest: {description[:80]})"
+                    entry.message, entry.created_at = new_msg, now_iso
+                else:
+                    session.add(LogEntry(date=today, kind=kind, message=f"1 ops (latest: {description[:80]})", is_auto=True, created_at=now_iso))
+            session.commit()
     finally:
-        conn.close()
+        engine.dispose()
 
     # keep markdown view in sync (best effort, ignore iCloud errors) — disabled per user request 2026-08-23
     pass
@@ -239,30 +215,27 @@ def append_log(vault, kind: str, description: str, quiet: bool = False) -> None:
 def log_tail(vault, lines: int = 30) -> str:
     _ensure_db(vault)
     # if DB empty but log.md exists (pre-migration), migrate
-    conn = _connect(vault)
+    engine = _engine(vault)
     try:
-        cur = conn.execute("SELECT COUNT(*) FROM logs;")
-        cnt = cur.fetchone()[0]
+        with Session(engine) as session:
+            cnt = session.scalar(select(func.count()).select_from(LogEntry))
         if cnt == 0 and vault.log_path.exists():
             # check if log_path has content beyond header
             try:
                 txt = vault.log_path.read_text(encoding="utf-8")
                 if "- " in txt:
-                    conn.close()
+                    engine.dispose()
                     try:
                         migrate_log_md_to_db(vault)
                     except Exception:
                         pass
-                    conn = _connect(vault)
+                    engine = _engine(vault)
             except OSError:
                 pass
-        cur = conn.execute(
-            "SELECT date, kind, message, is_auto FROM logs ORDER BY id DESC LIMIT ?;",
-            (lines,),
-        )
-        rows = cur.fetchall()
+        with Session(engine) as session:
+            rows = [(r.date, r.kind, r.message, r.is_auto) for r in session.scalars(select(LogEntry).order_by(LogEntry.id.desc()).limit(lines)).all()]
     finally:
-        conn.close()
+        engine.dispose()
     if not rows:
         return ""
     rows = list(reversed(rows))
@@ -271,10 +244,10 @@ def log_tail(vault, lines: int = 30) -> str:
 # helper for lint - expose raw log rows
 def _iter_log_rows(vault):
     _ensure_db(vault)
-    conn = _connect(vault)
+    engine = _engine(vault)
     try:
-        cur = conn.execute("SELECT date, kind, message, is_auto, created_at FROM logs ORDER BY id ASC;")
-        rows = cur.fetchall()
+        with Session(engine) as session:
+            rows = [(r.date, r.kind, r.message, r.is_auto, r.created_at) for r in session.scalars(select(LogEntry).order_by(LogEntry.id.asc())).all()]
     finally:
-        conn.close()
+        engine.dispose()
     return rows

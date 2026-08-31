@@ -11,6 +11,9 @@ from .links import TOKEN_RE
 from .search import query_tokens
 from .intent import normalize_search, page_anchor_score, page_search_text
 from obsidian_memory_core.db.migrations import upgrade
+from obsidian_memory_core.db.models import EmbeddingPage, FtsMeta, FtsPage
+from sqlalchemy import create_engine, delete, event, func, literal_column, select
+from sqlalchemy.orm import Session
 
 _EMBEDDING_MODEL = os.environ.get("OBSIDIAN_WIKI_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 _EMBEDDING_THRESHOLD = float(os.environ.get("OBSIDIAN_WIKI_EMBEDDING_THRESHOLD", "0.55"))
@@ -41,53 +44,30 @@ def _page_hash(page):
     return hashlib.sha256(page["text"].encode("utf-8")).hexdigest()
 
 
-def _ensure_embedding_schema(conn):
-    conn.execute("""CREATE TABLE IF NOT EXISTS embedding_pages (
-        path TEXT PRIMARY KEY,
-        content_hash TEXT NOT NULL,
-        model TEXT NOT NULL,
-        vector TEXT NOT NULL
-    )""")
-
-
 def _load_or_build_embeddings(vault, pages):
     """Load cached vectors and embed only new/changed pages."""
-    conn = _connect(vault)
+    engine = _engine(vault)
     try:
-        _ensure_embedding_schema(conn)
-        wanted = {p["rel"] for p in pages}
-        cached = {
-            row[0]: (row[1], row[2], json.loads(row[3]))
-            for row in conn.execute(
-                "SELECT path,content_hash,model,vector FROM embedding_pages"
-            )
-        }
-        stale = [
-            p for p in pages
-            if p["rel"] not in cached
-            or cached[p["rel"]][0] != _page_hash(p)
-            or cached[p["rel"]][1] != _EMBEDDING_MODEL
-        ]
-        if stale:
-            embedder = _get_embedder()
-            if embedder is None:
-                return {}, conn
-            vectors = list(embedder.embed([p["text"] for p in stale]))
-            for page, vector in zip(stale, vectors):
-                encoded = json.dumps([float(x) for x in vector], separators=(",", ":"))
-                conn.execute(
-                    "INSERT OR REPLACE INTO embedding_pages(path,content_hash,model,vector) VALUES (?,?,?,?)",
-                    (page["rel"], _page_hash(page), _EMBEDDING_MODEL, encoded),
-                )
-                cached[page["rel"]] = (_page_hash(page), _EMBEDDING_MODEL, list(vector))
-        for path in set(cached) - wanted:
-            conn.execute("DELETE FROM embedding_pages WHERE path=?", (path,))
-            cached.pop(path, None)
-        conn.commit()
-        return {path: value[2] for path, value in cached.items()}, conn
+        with Session(engine) as session:
+            wanted = {p["rel"] for p in pages}
+            cached = {row.path: (row.content_hash, row.model, json.loads(row.vector)) for row in session.scalars(select(EmbeddingPage)).all()}
+            stale = [p for p in pages if p["rel"] not in cached or cached[p["rel"]][0] != _page_hash(p) or cached[p["rel"]][1] != _EMBEDDING_MODEL]
+            if stale:
+                embedder = _get_embedder()
+                if embedder is None:
+                    return {}, engine
+                vectors = list(embedder.embed([p["text"] for p in stale]))
+                for page, vector in zip(stale, vectors):
+                    encoded = json.dumps([float(x) for x in vector], separators=(",", ":"))
+                    session.merge(EmbeddingPage(path=page["rel"], content_hash=_page_hash(page), model=_EMBEDDING_MODEL, vector=encoded))
+                    cached[page["rel"]] = (_page_hash(page), _EMBEDDING_MODEL, list(vector))
+            for path in set(cached) - wanted:
+                session.execute(delete(EmbeddingPage).where(EmbeddingPage.path == path))
+                cached.pop(path, None)
+            session.commit()
+            return {path: value[2] for path, value in cached.items()}, engine
     except Exception:
-        conn.rollback()
-        conn.close()
+        engine.dispose()
         return {}, None
 
 
@@ -103,7 +83,7 @@ def _embedding_search(vault, query: str, limit: int = 5, threshold: float | None
         query_vector = list(embedder.embed([query]))[0]
         page_vectors, conn = _load_or_build_embeddings(vault, pages)
         if conn is not None:
-            conn.close()
+            conn.dispose()
         scored = []
         for page in pages:
             vector = page_vectors.get(page["rel"])
@@ -134,11 +114,16 @@ SCHEMA = """CREATE VIRTUAL TABLE IF NOT EXISTS fts_pages USING fts5(
 )"""
 
 
-def _connect(vault):
-    conn = sqlite3.connect(str(vault.root / "fts.db"), timeout=5)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
+def _engine(vault):
+    engine = create_engine(f"sqlite:///{vault.root / 'fts.db'}", connect_args={"timeout": 5, "check_same_thread": False})
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _):
+        for pragma in ("PRAGMA journal_mode=WAL", "PRAGMA busy_timeout=5000"):
+            try:
+                dbapi_conn.execute(pragma)
+            except Exception:
+                pass
+    return engine
 
 
 def _fingerprint(vault) -> str:
@@ -161,19 +146,21 @@ def _fingerprint(vault) -> str:
 def build_fts_db(vault) -> dict:
     vault.root.mkdir(parents=True, exist_ok=True)
     fingerprint = _fingerprint(vault)
-    conn = _connect(vault)
+    engine = _engine(vault)
     try:
-        upgrade(conn)
-        conn.execute(SCHEMA)
-        conn.execute("DELETE FROM fts_pages")
-        pages = vault.load_pages()
-        rows = [(p['rel'], p['title'], p['body'], page_search_text(p), p['ptype'], p['updated']) for p in pages]
-        conn.executemany("INSERT INTO fts_pages(path,title,body,search_projection,ptype,updated) VALUES (?,?,?,?,?,?)", rows)
-        conn.execute("INSERT OR REPLACE INTO fts_meta(key,value) VALUES ('fingerprint',?)", (fingerprint,))
-        conn.commit()
-        return {"path": str(vault.root / "fts.db"), "pages": len(rows), "status": "rebuilt"}
+        with engine.connect() as conn:
+            upgrade(conn.connection)
+            conn.exec_driver_sql(SCHEMA)
+            conn.commit()
+        with Session(engine) as session:
+            session.execute(delete(FtsPage))
+            pages = vault.load_pages()
+            session.add_all([FtsPage(path=p['rel'], title=p['title'], body=p['body'], search_projection=page_search_text(p), ptype=p['ptype'], updated=p['updated']) for p in pages])
+            session.merge(FtsMeta(key="fingerprint", value=fingerprint))
+            session.commit()
+        return {"path": str(vault.root / "fts.db"), "pages": len(pages), "status": "rebuilt"}
     finally:
-        conn.close()
+        engine.dispose()
 
 
 def ensure_fresh(vault) -> dict:
@@ -182,26 +169,34 @@ def ensure_fresh(vault) -> dict:
     if not db.exists():
         return build_fts_db(vault)
     current = _fingerprint(vault)
-    conn = _connect(vault)
+    engine = _engine(vault)
     columns = set()
     try:
-        row = conn.execute("SELECT value FROM fts_meta WHERE key='fingerprint'").fetchone()
-        columns = {r[1] for r in conn.execute("PRAGMA table_info(fts_pages)")}
+        with Session(engine) as session:
+            row = session.scalar(select(FtsMeta.value).where(FtsMeta.key == "fingerprint"))
+        with engine.connect() as conn:
+            columns = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(fts_pages)")}
     except sqlite3.Error:
         row = None
     finally:
-        conn.close()
-    if not row or row[0] != current or "search_projection" not in columns:
+        engine.dispose()
+    if not row or row != current or "search_projection" not in columns:
         return build_fts_db(vault)
     return {"path": str(db), "status": "fresh"}
 
 def _fts_rows(vault, query, limit=100):
-    conn = _connect(vault)
+    engine = _engine(vault)
     try:
         q = " OR ".join(query_tokens(normalize_search(query)))
         if not q: return []
-        return conn.execute("SELECT path,title,body,ptype,updated,bm25(fts_pages) FROM fts_pages WHERE fts_pages MATCH ? ORDER BY bm25(fts_pages) LIMIT ?", (q, limit)).fetchall()
-    finally: conn.close()
+        rank = literal_column("bm25(fts_pages)")
+        statement = select(
+            FtsPage.path, FtsPage.title, FtsPage.body, FtsPage.ptype,
+            FtsPage.updated, rank,
+        ).where(FtsPage.body.match(q)).order_by(rank).limit(limit)
+        with Session(engine) as session:
+            return [tuple(row) for row in session.execute(statement).all()]
+    finally: engine.dispose()
 
 def search_fts(vault, query, limit=100):
     rows = _fts_rows(vault, query, limit)

@@ -10,12 +10,13 @@ from sqlalchemy import create_engine
 
 
 MIGRATION_DIR = Path(__file__).with_name("alembic")
+LOG_MIGRATION_DIR = Path(__file__).with_name("alembic_log")
 
 
-def upgrade(conn: sqlite3.Connection) -> None:
-    """Upgrade the supplied SQLite connection to the current Alembic head."""
+def upgrade(conn: sqlite3.Connection, migration_dir: Path = MIGRATION_DIR) -> None:
+    """Upgrade the supplied SQLite connection to an Alembic head."""
     config = Config()
-    config.set_main_option("script_location", str(MIGRATION_DIR))
+    config.set_main_option("script_location", str(migration_dir))
     engine = create_engine("sqlite://", creator=lambda: conn)
     with engine.connect() as sqlalchemy_conn:
         config.attributes["connection"] = sqlalchemy_conn

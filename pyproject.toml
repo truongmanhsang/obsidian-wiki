@@ -7,7 +7,7 @@ name = "obsidian-memory"
 version = "0.1.0"
 description = "Shared Obsidian wiki memory core and MCP server"
 requires-python = ">=3.11"
-dependencies = ["alembic>=1.13,<2", "fastmcp>=2.0", "fastembed>=0.8", "PyYAML>=6.0"]
+dependencies = ["alembic>=1.13,<2", "fastmcp>=2.0", "fastembed>=0.8", "PyYAML>=6.0", "SQLAlchemy>=2.0,<3"]
 
 [project.optional-dependencies]
 test = ["pytest>=8"]

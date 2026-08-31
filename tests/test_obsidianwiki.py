@@ -183,8 +183,20 @@ def test_alembic_migrations_run_in_order_once():
     rows = conn.execute(
         "SELECT version_num FROM alembic_version"
     ).fetchall()
-    assert rows == [("fts_search_projection",)]
+    assert rows == [("fts_embedding_cache",)]
     conn.close()
+
+
+def test_log_database_is_migrated_and_uses_orm(tmp_path):
+    from obsidian_memory_core.wiki.log import _ensure_db, append_log, _iter_log_rows
+    from obsidian_memory_core.wiki.vault import WikiVault
+
+    vault = WikiVault(str(tmp_path / "vault"))
+    _ensure_db(vault)
+    append_log(vault, "WRITE", "ORM migration")
+    with sqlite3.connect(vault.root / "log.db") as conn:
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchall() == [("log_baseline",)]
+    assert _iter_log_rows(vault)[0][2] == "ORM migration"
 
 
 def test_query_features_are_derived_from_page_text_not_domain_vocabulary():
