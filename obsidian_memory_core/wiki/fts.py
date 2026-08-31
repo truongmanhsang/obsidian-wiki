@@ -10,6 +10,7 @@ from pathlib import Path
 from .links import TOKEN_RE
 from .search import query_tokens
 from .intent import normalize_search, page_anchor_score, page_search_text
+from obsidian_memory_core.db.migrations import upgrade
 
 _EMBEDDING_MODEL = os.environ.get("OBSIDIAN_WIKI_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 _EMBEDDING_THRESHOLD = float(os.environ.get("OBSIDIAN_WIKI_EMBEDDING_THRESHOLD", "0.55"))
@@ -162,11 +163,8 @@ def build_fts_db(vault) -> dict:
     fingerprint = _fingerprint(vault)
     conn = _connect(vault)
     try:
-        columns = {r[1] for r in conn.execute("PRAGMA table_info(fts_pages)")}
-        if columns and "search_projection" not in columns:
-            conn.execute("DROP TABLE fts_pages")
+        upgrade(conn)
         conn.execute(SCHEMA)
-        conn.execute("CREATE TABLE IF NOT EXISTS fts_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         conn.execute("DELETE FROM fts_pages")
         pages = vault.load_pages()
         rows = [(p['rel'], p['title'], p['body'], page_search_text(p), p['ptype'], p['updated']) for p in pages]

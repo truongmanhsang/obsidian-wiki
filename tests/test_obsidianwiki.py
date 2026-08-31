@@ -159,6 +159,7 @@ def test_search_rebuilds_legacy_fts_schema_with_projection_column(tmp_path):
     conn = sqlite3.connect(db)
     try:
         conn.execute("DROP TABLE fts_pages")
+        conn.execute("DROP TABLE alembic_version")
         conn.execute("""CREATE VIRTUAL TABLE fts_pages USING fts5(
             path UNINDEXED, title, body, ptype UNINDEXED, updated UNINDEXED,
             tokenize='porter unicode61'
@@ -171,6 +172,19 @@ def test_search_rebuilds_legacy_fts_schema_with_projection_column(tmp_path):
 
     assert result["results"]
     assert result["results"][0]["path"] == "concepts/legacy.md"
+
+
+def test_alembic_migrations_run_in_order_once():
+    from obsidian_memory_core.db.migrations import upgrade
+
+    conn = sqlite3.connect(":memory:")
+    upgrade(conn)
+    upgrade(conn)
+    rows = conn.execute(
+        "SELECT version_num FROM alembic_version"
+    ).fetchall()
+    assert rows == [("fts_search_projection",)]
+    conn.close()
 
 
 def test_query_features_are_derived_from_page_text_not_domain_vocabulary():
