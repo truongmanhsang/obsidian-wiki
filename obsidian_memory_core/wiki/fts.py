@@ -162,6 +162,9 @@ def build_fts_db(vault) -> dict:
     fingerprint = _fingerprint(vault)
     conn = _connect(vault)
     try:
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(fts_pages)")}
+        if columns and "search_projection" not in columns:
+            conn.execute("DROP TABLE fts_pages")
         conn.execute(SCHEMA)
         conn.execute("CREATE TABLE IF NOT EXISTS fts_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         conn.execute("DELETE FROM fts_pages")

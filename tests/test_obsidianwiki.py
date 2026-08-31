@@ -8,6 +8,7 @@ Runs against a temp vault - never touches the real agent-vault.
 import importlib.util
 import asyncio
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -144,6 +145,32 @@ def test_search_matches_accented_and_unaccented_latin_metadata(tmp_path):
         result = store.search(query, limit=5)
         assert result["results"]
         assert result["results"][0]["path"] == "concepts/coffee.md"
+
+
+def test_search_rebuilds_legacy_fts_schema_with_projection_column(tmp_path):
+    from obsidian_memory_core import MemoryStore
+
+    store = MemoryStore(tmp_path / "vault")
+    store.ensure_ready()
+    store.write("concepts/legacy", "# Legacy Search\n\nUnicode indexing.\n")
+    store.search("initial index build", limit=5)
+
+    db = store.root / "fts.db"
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("DROP TABLE fts_pages")
+        conn.execute("""CREATE VIRTUAL TABLE fts_pages USING fts5(
+            path UNINDEXED, title, body, ptype UNINDEXED, updated UNINDEXED,
+            tokenize='porter unicode61'
+        )""")
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = store.search("Unicode indexing", limit=5)
+
+    assert result["results"]
+    assert result["results"][0]["path"] == "concepts/legacy.md"
 
 
 def test_query_features_are_derived_from_page_text_not_domain_vocabulary():
