@@ -108,12 +108,6 @@ def _reset_embedder_for_tests():
     _EMBEDDER_FAILED = False
 
 
-SCHEMA = """CREATE VIRTUAL TABLE IF NOT EXISTS fts_pages USING fts5(
-    path UNINDEXED, title, body, search_projection, ptype UNINDEXED, updated UNINDEXED,
-    tokenize='porter unicode61'
-)"""
-
-
 def _engine(vault):
     engine = create_engine(f"sqlite:///{vault.root / 'fts.db'}", connect_args={"timeout": 5, "check_same_thread": False})
     @event.listens_for(engine, "connect")
@@ -150,7 +144,6 @@ def build_fts_db(vault) -> dict:
     try:
         with engine.connect() as conn:
             upgrade(conn.connection)
-            conn.exec_driver_sql(SCHEMA)
             conn.commit()
         with Session(engine) as session:
             session.execute(delete(FtsPage))

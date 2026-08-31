@@ -185,16 +185,15 @@ class MemoryStore:
                     "revision": current,
                 }
 
-            # ``write_page`` regenerates the auto-managed backlink section by
-            # removing everything from ``## Linked from`` onward. Insert new
-            # content before that section, otherwise the append is silently
-            # discarded during backlink maintenance.
-            backlink_header = "\n## Linked from\n"
-            backlink_at = previous.find(backlink_header)
-            if backlink_at >= 0:
-                body = previous[:backlink_at].rstrip()
-                backlinks = previous[backlink_at:]
-                merged = body + "\n\n" + content.strip() + "\n\n" + backlinks.lstrip("\n")
+            # Sources, Related, and Linked from are terminal sections. Keep
+            # appended substantive sections before the earliest one; otherwise
+            # a new section lands after page metadata/navigation and pages
+            # grow multiple terminal sections over time.
+            terminal = re.search(r"\n## (?:Sources|Related|Linked from)\n", previous)
+            if terminal:
+                body = previous[:terminal.start()].rstrip()
+                tail = previous[terminal.start():]
+                merged = body + "\n\n" + content.strip() + "\n\n" + tail.lstrip("\n")
             else:
                 separator = "" if previous.endswith("\n\n") else "\n"
                 merged = previous + separator + content.lstrip("\n")

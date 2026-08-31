@@ -183,7 +183,10 @@ def test_alembic_migrations_run_in_order_once():
     rows = conn.execute(
         "SELECT version_num FROM alembic_version"
     ).fetchall()
-    assert rows == [("fts_embedding_cache",)]
+    assert rows == [("fts_pages_virtual_table",)]
+    assert conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name='fts_pages'"
+    ).fetchone()[0].startswith("CREATE VIRTUAL TABLE")
     conn.close()
 
 
@@ -770,6 +773,20 @@ class TestWritePath:
         verified = _call(provider, action="read", page="concepts/append-with-backlinks")
         assert "Appended content." in verified["content"]
         assert verified["content"].index("Appended content.") < verified["content"].index("## Linked from")
+
+    def test_append_inserts_new_sections_before_related_and_linked_from(self, provider):
+        _call(provider, action="write", page="answers/append-related",
+              content="# Append Related\n\n## Existing analysis\n\nDetails.\n\n## Sources\n\n- Existing source\n\n## Related\n\n- [[concepts/obsidian-wiki-index]]\n")
+        old = _call(provider, action="read", page="answers/append-related")
+        _call(provider, action="append", page="answers/append-related",
+              content="## Historical comparison\n\nNew comparison.",
+              expected_revision=old["revision"])
+        verified = _call(provider, action="read", page="answers/append-related")
+        text = verified["content"]
+        assert text.index("## Historical comparison") < text.index("## Sources")
+        assert text.index("## Historical comparison") < text.index("## Related")
+        assert text.count("## Sources") == 1
+        assert text.count("## Related") == 1
 
     def test_update_stamps_new_date(self, provider):
         _call(provider, action="write", page="entities/a1",
