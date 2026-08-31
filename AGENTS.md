@@ -177,6 +177,14 @@ Agents must **PROACTIVELY and AUTOMATICALLY** trigger memory consolidation into 
 5. **Never Defer to End of Session**:
    - Do not postpone durable logging to the end of a conversation or wait for the user to ask "did you save this to memory?". Consolidate and persist knowledge dynamically as discoveries occur.
 
+## Memory checkpoint before every answer
+
+Before concluding any research, recommendation, comparison, or financial discussion:
+
+- Decide whether the result contains a reusable conclusion, recommendation, decision, preference, or lesson.
+- If yes, update the canonical Obsidian Wiki page immediately before sending the final answer.
+- Do not wait for explicit user confirmation when the conclusion is already actionable.
+
 ## Minimal examples
 
 ### Search and read
