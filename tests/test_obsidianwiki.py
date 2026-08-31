@@ -174,6 +174,28 @@ def test_search_rebuilds_legacy_fts_schema_with_projection_column(tmp_path):
     assert result["results"][0]["path"] == "concepts/legacy.md"
 
 
+def test_fts_search_matches_metadata_in_search_projection(tmp_path):
+    from obsidian_memory_core import MemoryStore
+
+    store = MemoryStore(tmp_path / "vault")
+    store.ensure_ready()
+    store.write(
+        "entities/metadata-only",
+        "---\n"
+        "type: entity\n"
+        "aliases: [Projection Alias]\n"
+        "tags: [projection-test]\n"
+        "search_terms: [unique projection keyword]\n"
+        "---\n"
+        "# Metadata Entity\n\nBody has no searchable phrase.\n",
+    )
+
+    result = store.search("unique projection keyword", limit=5)
+
+    assert result["results"]
+    assert result["results"][0]["path"] == "entities/metadata-only.md"
+
+
 def test_alembic_migrations_run_in_order_once():
     from obsidian_memory_core.db.migrations import upgrade
 

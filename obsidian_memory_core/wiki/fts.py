@@ -186,7 +186,7 @@ def _fts_rows(vault, query, limit=100):
         statement = select(
             FtsPage.path, FtsPage.title, FtsPage.body, FtsPage.ptype,
             FtsPage.updated, rank,
-        ).where(FtsPage.body.match(q)).order_by(rank).limit(limit)
+        ).where(FtsPage.search_projection.match(q)).order_by(rank).limit(limit)
         with Session(engine) as session:
             return [tuple(row) for row in session.execute(statement).all()]
     finally: engine.dispose()
