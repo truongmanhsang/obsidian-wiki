@@ -9,7 +9,7 @@ from datetime import date
 from pathlib import Path
 from .links import TOKEN_RE
 from .search import query_tokens
-from .intent import page_anchor_score
+from .intent import normalize_search, page_anchor_score, page_search_text
 
 _EMBEDDING_MODEL = os.environ.get("OBSIDIAN_WIKI_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 _EMBEDDING_THRESHOLD = float(os.environ.get("OBSIDIAN_WIKI_EMBEDDING_THRESHOLD", "0.55"))
@@ -128,7 +128,7 @@ def _reset_embedder_for_tests():
 
 
 SCHEMA = """CREATE VIRTUAL TABLE IF NOT EXISTS fts_pages USING fts5(
-    path UNINDEXED, title, body, ptype UNINDEXED, updated UNINDEXED,
+    path UNINDEXED, title, body, search_projection, ptype UNINDEXED, updated UNINDEXED,
     tokenize='porter unicode61'
 )"""
 
@@ -165,8 +165,9 @@ def build_fts_db(vault) -> dict:
         conn.execute(SCHEMA)
         conn.execute("CREATE TABLE IF NOT EXISTS fts_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         conn.execute("DELETE FROM fts_pages")
-        rows = [(p['rel'], p['title'], p['body'], p['ptype'], p['updated']) for p in vault.load_pages()]
-        conn.executemany("INSERT INTO fts_pages(path,title,body,ptype,updated) VALUES (?,?,?,?,?)", rows)
+        pages = vault.load_pages()
+        rows = [(p['rel'], p['title'], p['body'], page_search_text(p), p['ptype'], p['updated']) for p in pages]
+        conn.executemany("INSERT INTO fts_pages(path,title,body,search_projection,ptype,updated) VALUES (?,?,?,?,?,?)", rows)
         conn.execute("INSERT OR REPLACE INTO fts_meta(key,value) VALUES ('fingerprint',?)", (fingerprint,))
         conn.commit()
         return {"path": str(vault.root / "fts.db"), "pages": len(rows), "status": "rebuilt"}
@@ -181,31 +182,34 @@ def ensure_fresh(vault) -> dict:
         return build_fts_db(vault)
     current = _fingerprint(vault)
     conn = _connect(vault)
+    columns = set()
     try:
         row = conn.execute("SELECT value FROM fts_meta WHERE key='fingerprint'").fetchone()
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(fts_pages)")}
     except sqlite3.Error:
         row = None
     finally:
         conn.close()
-    if not row or row[0] != current:
+    if not row or row[0] != current or "search_projection" not in columns:
         return build_fts_db(vault)
     return {"path": str(db), "status": "fresh"}
 
 def _fts_rows(vault, query, limit=100):
     conn = _connect(vault)
     try:
-        q = " OR ".join(query_tokens(query))
+        q = " OR ".join(query_tokens(normalize_search(query)))
         if not q: return []
         return conn.execute("SELECT path,title,body,ptype,updated,bm25(fts_pages) FROM fts_pages WHERE fts_pages MATCH ? ORDER BY bm25(fts_pages) LIMIT ?", (q, limit)).fetchall()
     finally: conn.close()
 
 def search_fts(vault, query, limit=100):
     rows = _fts_rows(vault, query, limit)
-    return [{"path":r[0],"title":r[1],"type":r[3],"updated":r[4],"fts_rank":-float(r[5]),"snippet":next((x.strip()[:180] for x in r[2].splitlines() if any(t in x.lower() for t in TOKEN_RE.findall(query.lower()))),"")} for r in rows]
+    tokens = query_tokens(query)
+    return [{"path":r[0],"title":r[1],"type":r[3],"updated":r[4],"fts_rank":-float(r[5]),"snippet":next((x.strip()[:180] for x in r[2].splitlines() if any(t in normalize_search(x) for t in tokens)),"")} for r in rows]
 
 def _has_exact_curated_match(vault, query: str, results: list[dict]) -> bool:
     """Return true when lexical search found the requested name/alias exactly."""
-    normalized = " ".join(query.casefold().split())
+    normalized = normalize_search(query)
     if len(normalized) < 3:
         return False
     for result in results:
@@ -216,7 +220,7 @@ def _has_exact_curated_match(vault, query: str, results: list[dict]) -> bool:
         aliases = page["meta"].get("aliases", [])
         candidates.extend(aliases if isinstance(aliases, list) else [str(aliases)])
         for value in candidates:
-            candidate = " ".join(str(value).casefold().split())
+            candidate = normalize_search(value)
             if candidate and (normalized == candidate or candidate in normalized):
                 return True
     return False

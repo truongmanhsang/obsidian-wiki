@@ -8,12 +8,31 @@ not a code change.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 TOKEN_RE = re.compile(r"[^\W_]{2,}", flags=re.UNICODE)
 
 
+def normalize_search(text: str) -> str:
+    """Normalize search text without discarding non-Latin combining marks."""
+    value = unicodedata.normalize("NFKC", str(text)).casefold()
+    value = unicodedata.normalize("NFD", value)
+    output = []
+    last_base_is_latin = False
+    for char in value:
+        category = unicodedata.category(char)
+        if category.startswith("M"):
+            if last_base_is_latin:
+                continue
+            output.append(char)
+            continue
+        output.append(char)
+        last_base_is_latin = unicodedata.name(char, "").startswith("LATIN")
+    return re.sub(r"\s+", " ", "".join(output)).strip()
+
+
 def query_tokens(query: str) -> list[str]:
-    return TOKEN_RE.findall(" ".join(str(query).casefold().split()))
+    return TOKEN_RE.findall(normalize_search(query))
 
 
 def _phrases(tokens: list[str]) -> list[str]:
@@ -34,11 +53,11 @@ def page_search_text(page: dict) -> str:
     meta = page.get("meta", {})
     structured = []
     for key, value in meta.items():
-        if key not in {"updated", "tags"}:
+        if key != "updated":
             structured.extend([str(key), str(value)])
-    return " ".join(
+    return normalize_search(" ".join(
         [page.get("title", ""), page.get("stem", ""), page.get("body", ""), *structured]
-    ).casefold()
+    ))
 
 
 def page_anchor_score(page: dict, query: str) -> float:
@@ -52,9 +71,9 @@ def page_anchor_score(page: dict, query: str) -> float:
     declared = meta.get("search_terms", [])
     if isinstance(declared, str):
         declared = [declared]
-    declared = [str(term).casefold().strip() for term in declared if str(term).strip()]
+    declared = [normalize_search(term) for term in declared if str(term).strip()]
     anchors = set(declared)
-    anchors.update(str(value).casefold().strip() for value in meta.get("aliases", []) if str(value).strip())
+    anchors.update(normalize_search(value) for value in meta.get("aliases", []) if str(value).strip())
     phrase_score = sum(0.18 for phrase in phrases if phrase in text or phrase in anchors)
     token_score = sum(0.025 for token in tokens if token in text)
     return min(0.55, phrase_score + token_score)

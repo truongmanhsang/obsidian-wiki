@@ -3,11 +3,11 @@
 from __future__ import annotations
 import re
 from .links import TOKEN_RE, _alias_map
-from .intent import query_tokens
+from .intent import normalize_search, query_tokens
 
 def search(vault, query: str, limit: int = 5) -> list[dict]:
     from .vault import VALID_TYPES  # noqa
-    query_low = query.lower()
+    query_low = normalize_search(query)
     # TOKEN_RE is intentionally ASCII-oriented for wikilinks, but memory
     # search must also handle names and facts written with Unicode (e.g.
     # Vietnamese diacritics).  Keep the old regex as a fallback only for
@@ -22,9 +22,9 @@ def search(vault, query: str, limit: int = 5) -> list[dict]:
     if not tokens and not alias_tokens:
         return []
     for page in all_pages:
-        low = page["text"].lower()
-        my_aliases = {a for a, rel in aliases.items() if rel == page["rel"]} - {page["stem"].lower()}
-        title_hits = sum(1 for t in tokens if t in page["stem"].lower())
+        low = normalize_search(page["text"])
+        my_aliases = {normalize_search(a) for a, rel in aliases.items() if rel == page["rel"]} - {normalize_search(page["stem"])}
+        title_hits = sum(1 for t in tokens if t in normalize_search(page["stem"]))
         title_hits += sum(5 for t in alias_tokens if aliases.get(t) == page["rel"])
         title_hits += sum(1 for t in tokens if any(t in a for a in my_aliases))
         body_hits = sum(low.count(t) for t in tokens)
@@ -38,21 +38,21 @@ def search(vault, query: str, limit: int = 5) -> list[dict]:
         tags_val = page["meta"].get("tags", [])
         aliases_val = page["meta"].get("aliases", [])
         if isinstance(tags_val, list):
-            tags_parts = [str(x).lower() for x in tags_val]
+            tags_parts = [normalize_search(x) for x in tags_val]
         else:
-            tags_parts = [p.strip().lower() for p in str(tags_val).replace("[","").replace("]","").split(",") if p.strip()]
+            tags_parts = [normalize_search(p) for p in str(tags_val).replace("[","").replace("]","").split(",") if p.strip()]
         if isinstance(aliases_val, list):
-            alias_parts = [str(x).lower() for x in aliases_val]
+            alias_parts = [normalize_search(x) for x in aliases_val]
         else:
-            alias_parts = [p.strip().lower() for p in str(aliases_val).replace("[","").replace("]","").split(",") if p.strip()]
-        tag_text = " ".join(tags_parts) + " " + str(page["meta"].get("type","")).lower() + " " + " ".join(alias_parts)
+            alias_parts = [normalize_search(p) for p in str(aliases_val).replace("[","").replace("]","").split(",") if p.strip()]
+        tag_text = " ".join(tags_parts) + " " + normalize_search(page["meta"].get("type", "")) + " " + " ".join(alias_parts)
         tag_hits = sum(1 for t in tokens if t and t in tag_text)
         score = title_hits * 3 + body_hits + tag_hits * 2 + phrase_hits
         if score <= 0:
             continue
         snippet = ""
         for line in page["body"].splitlines():
-            line_low = line.lower()
+            line_low = normalize_search(line)
             if any(t in line_low for t in tokens) and len(line.strip()) > 3:
                 snippet = line.strip()[:180]
                 break

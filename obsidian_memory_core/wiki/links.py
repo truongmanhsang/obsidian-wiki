@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from .frontmatter import FRONTMATTER_RE, parse_frontmatter
+from .intent import normalize_search
 
 WIKILINK_RE = re.compile(r"\[\[([^\]\|#]+)(?:#[^\]\|]*)?(?:\|[^\]]*)?\]\]")
 TOKEN_RE = re.compile(r"[a-z0-9]{3,}")
@@ -11,7 +12,7 @@ TOKEN_RE = re.compile(r"[a-z0-9]{3,}")
 def _alias_map(pages: list) -> dict:
     m: dict = {}
     for p in pages:
-        m.setdefault(p["stem"].lower(), p["rel"])
+        m.setdefault(normalize_search(p["stem"]), p["rel"])
         raw = p["meta"].get("aliases")
         aliases_list: list[str] = []
         if isinstance(raw, list):
@@ -41,7 +42,7 @@ def _alias_map(pages: list) -> dict:
                 except Exception:
                     pass
         for a in aliases_list:
-            key = a.strip().strip("'\"").lower()
+            key = normalize_search(a.strip().strip("'\""))
             if key and key not in m:
                 m[key] = p["rel"]
     return m

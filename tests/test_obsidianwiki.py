@@ -112,6 +112,40 @@ def test_query_tokens_preserve_unicode_diacritics():
     ]
 
 
+def test_normalize_search_folds_latin_diacritics_and_unicode_forms():
+    from obsidian_memory_core.wiki.intent import normalize_search
+
+    original = "  Cà phê  "
+    assert normalize_search(original) == "ca phe"
+    assert normalize_search("Cafe\u0301") == "cafe"
+    assert normalize_search("Ｍｅｍｏ") == "memo"
+    assert original == "  Cà phê  "
+
+
+def test_normalize_search_preserves_non_latin_combining_marks():
+    from obsidian_memory_core.wiki.intent import normalize_search
+
+    arabic = "مَرْحَبًا"
+    assert normalize_search(arabic) == arabic
+
+
+def test_search_matches_accented_and_unaccented_latin_metadata(tmp_path):
+    from obsidian_memory_core import MemoryStore
+
+    store = MemoryStore(tmp_path / "vault")
+    store.ensure_ready()
+    store.write(
+        "concepts/coffee",
+        "---\ntype: concept\naliases: [Cà phê]\ntags: [beverage]\n"
+        "search_terms: [café drink]\n---\n# Cà phê\n\nA café drink.\n",
+    )
+
+    for query in ("cà phê", "ca phe", "cafe drink", "beverage"):
+        result = store.search(query, limit=5)
+        assert result["results"]
+        assert result["results"][0]["path"] == "concepts/coffee.md"
+
+
 def test_query_features_are_derived_from_page_text_not_domain_vocabulary():
     from obsidian_memory_core.wiki.intent import analyze_query
 
