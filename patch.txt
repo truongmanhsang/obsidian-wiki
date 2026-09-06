@@ -1,0 +1,25 @@
+#### Docker Compose setup
+
+For a persistent standalone server, use the provided Docker Compose configuration. This runs the memory server independently from Hermes (note that `memory_reflect` will not be available in standalone mode).
+
+First, ensure Docker is installed. Then, from the `obsidianwiki` directory, start the server:
+
+```bash
+docker compose up -d
+```
+
+Verify the service is running on port 8765:
+
+```bash
+docker compose logs -f
+```
+
+The Docker container will map port `8765` and automatically start on system boot. Note that your iCloud vault path (`~/Library/Mobile Documents/iCloud~md~obsidian/Documents/agent-vault`) is hardcoded in the `docker-compose.yml`. Update it if your vault is stored elsewhere.
+
+After the server is running, restart Hermes so it rediscovers the HTTP MCP server:
+
+```bash
+hermes gateway restart
+```
+
+Repeat the MCP client configuration and restart for every Hermes profile. All profiles must use the same URL, while only the Docker container owns the server process and vault writes.

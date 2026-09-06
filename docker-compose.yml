@@ -1,0 +1,20 @@
+services:
+  obsidian-memory:
+    build: .
+    container_name: obsidian-memory
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      # Internal mount path mapped to the vault below
+      - OBSIDIAN_VAULT_PATH=/vault
+      # Internal path for the job queue SQLite database
+      - WIKI_JOB_DB=/data/jobs.db
+    volumes:
+      # Map the iCloud vault to the container (update this if your vault is elsewhere)
+      - ~/Library/Mobile Documents/iCloud~md~obsidian/Documents/agent-vault:/vault
+      # Persist the job database outside the container
+      - obsidian-memory-data:/data
+
+volumes:
+  obsidian-memory-data:

@@ -415,108 +415,31 @@ old capture/extraction scripts directly while the central server is active;
 they remain available for compatibility and diagnostics, but direct execution
 can bypass the central job queue.
 
-#### macOS LaunchAgent setup
+#### Docker Compose setup
 
-For a persistent single server on macOS, install the repository's LaunchAgent
-outside the repository at:
+For a persistent standalone server, use the provided Docker Compose configuration. This runs the memory server independently from Hermes (note that `memory_reflect` will not be available in standalone mode).
 
-```text
-~/Library/LaunchAgents/com.truongmanhsang.obsidian-memory.plist
-```
-
-The plist should launch the Hermes virtual environment's FastMCP executable,
-bind only to localhost, and point to the real vault path. Replace the example
-paths if the repository or vault is elsewhere:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.example.obsidian-memory</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/absolute/path/to/venv/bin/fastmcp</string>
-    <string>run</string>
-    <string>/absolute/path/to/obsidian-wiki/mcp_server.py:mcp</string>
-    <string>--transport</string>
-    <string>http</string>
-    <string>--host</string>
-    <string>127.0.0.1</string>
-    <string>--port</string>
-    <string>8765</string>
-  </array>
-  <key>WorkingDirectory</key>
-  <string>/absolute/path/to/obsidian-wiki</string>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>OBSIDIAN_VAULT_PATH</key>
-    <string>/absolute/path/to/agent-vault</string>
-  </dict>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>ThrottleInterval</key>
-  <integer>10</integer>
-  <key>StandardOutPath</key>
-  <string>/absolute/path/to/logs/obsidian-memory-server.log</string>
-  <key>StandardErrorPath</key>
-  <string>/absolute/path/to/logs/obsidian-memory-server.error.log</string>
-</dict>
-</plist>
-```
-
-Create the log directory and validate the plist before loading it:
+First, ensure Docker is installed. Then, from the `obsidianwiki` directory, start the server:
 
 ```bash
-mkdir -p "$HOME/.hermes/logs"
-plutil -lint "$HOME/Library/LaunchAgents/com.example.obsidian-memory.plist"
+docker compose up -d
 ```
 
-Load or reload the service from a **separate Terminal window**, not from an
-active Hermes gateway process. Hermes intentionally blocks a gateway process
-from bootstrapping or restarting persistent LaunchAgents because that process
-could terminate itself while executing the command:
+Verify the service is running on port 8765:
 
 ```bash
-LABEL="com.example.obsidian-memory"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-DOMAIN="gui/$(id -u)"
-
-launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
-launchctl bootstrap "$DOMAIN" "$PLIST"
-launchctl kickstart -k "$DOMAIN/$LABEL"
+docker compose logs -f
 ```
 
-Verify the service and port:
+The Docker container will map port `8765` and automatically start on system boot. Note that your iCloud vault path (`~/Library/Mobile Documents/iCloud~md~obsidian/Documents/agent-vault`) is hardcoded in the `docker-compose.yml`. Update it if your vault is stored elsewhere.
 
-```bash
-launchctl print "gui/$(id -u)/$LABEL"
-lsof -nP -iTCP:8765 -sTCP:LISTEN
-```
-
-A healthy service listens on `127.0.0.1:8765`. A direct `GET /mcp` may return
-HTTP `406 Not Acceptable`; that is normal for an MCP endpoint because clients
-must negotiate the MCP `Accept` headers and protocol. Verify the server with
-an MCP client or the FastMCP inspector instead:
-
-```bash
-.venv/bin/fastmcp inspect mcp_server.py:mcp
-```
-
-After the server is running, restart Hermes from the separate Terminal so it
-rediscovers the HTTP MCP server:
+After the server is running, restart Hermes so it rediscovers the HTTP MCP server:
 
 ```bash
 hermes gateway restart
 ```
 
-Repeat the MCP client configuration and restart for every Hermes profile.
-All profiles must use the same URL, while only the LaunchAgent owns the
-server process and vault writes.
+Repeat the MCP client configuration and restart for every Hermes profile. All profiles must use the same URL, while only the Docker container owns the server process and vault writes.
 
 ## Session ingest pipeline
 
