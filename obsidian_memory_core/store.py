@@ -10,6 +10,35 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+
+if os.name == "nt":
+    import msvcrt
+else:  # pragma: no cover - exercised on POSIX CI
+    msvcrt = None
+
+
+def _lock_file(fh: Any) -> None:
+    """Acquire a blocking exclusive lock using the host platform primitive."""
+    if msvcrt is not None:
+        # msvcrt.locking() locks bytes starting at the current file position.
+        # The sidecar is opened a+, so byte 0 is a stable cross-process lock
+        # region even when the file is initially empty.
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+        return
+    import fcntl
+    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+
+
+def _unlock_file(fh: Any) -> None:
+    """Release a lock acquired by :func:`_lock_file`."""
+    if msvcrt is not None:
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+    import fcntl
+    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
 from .wiki import WikiVault, WikiVaultError
 
 
@@ -37,15 +66,15 @@ class MemoryStore:
         self.root.mkdir(parents=True, exist_ok=True)
         with self.lock_path.open("a+", encoding="utf-8") as fh:
             try:
-                import fcntl
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-            except ImportError as exc:
-                raise MemoryWriteError("exclusive file locking is unavailable on this platform") from exc
+                _lock_file(fh)
+            except (ImportError, OSError) as exc:
+                raise MemoryWriteError(
+                    f"exclusive file locking failed for {self.lock_path}: {exc}"
+                ) from exc
             try:
                 yield
             finally:
-                import fcntl
-                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                _unlock_file(fh)
 
     def _page_path(self, page: str) -> Path:
         path = self.vault.safe_resolve(page)
