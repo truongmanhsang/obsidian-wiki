@@ -1263,6 +1263,45 @@ class TestLLMIndexLifecycle:
         assert index_path.read_text(encoding="utf-8") == original
 
 
+def test_mcp_memory_lint_accepts_fix_and_dry_run(monkeypatch, tmp_path):
+    import mcp_server
+    from obsidian_memory_core.store import MemoryStore
+
+    monkeypatch.setattr(mcp_server, "_SERVER_VAULT_PATH", str(tmp_path / "vault"))
+    calls = []
+    monkeypatch.setattr(
+        MemoryStore,
+        "fix_orphans",
+        lambda self, dry_run=False: calls.append(dry_run) or {"fixed": 0},
+    )
+    result = mcp_server.memory_lint(fix=True, dry_run=True)
+    assert result["fix_orphans"] == {"fixed": 0}
+    assert calls == [True]
+
+
+def test_mcp_provider_forwards_lint_fix_arguments(monkeypatch, tmp_path):
+    mod = _load_module()
+    provider = mod.ObsidianWikiMemoryProvider({
+        "vault_path": str(tmp_path / "vault"),
+        "access_mode": "mcp",
+    })
+    provider.initialize(session_id="test")
+    captured = {}
+    monkeypatch.setattr(
+        provider,
+        "_mcp_call",
+        lambda tool, args: captured.update(tool=tool, args=args) or {"clean": True},
+    )
+    result = json.loads(provider.handle_tool_call("obsidian_wiki", {
+        "action": "lint", "fix": True, "dry_run": False,
+    }))
+    assert result == {"clean": True}
+    assert captured == {
+        "tool": "memory_lint",
+        "args": {"fix": True, "dry_run": False},
+    }
+
+
 class TestPrefetch:
     def test_trivial_query_returns_empty(self, provider):
         assert provider.prefetch("ok") == ""

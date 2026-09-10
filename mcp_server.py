@@ -69,9 +69,12 @@ def memory_list(limit: int = 50) -> dict[str, Any]:
 
 
 @mcp.tool()
-def memory_lint() -> dict[str, Any]:
-    """Check broken links, orphan pages, and wiki integrity."""
-    return _store().lint()
+def memory_lint(fix: bool = False, dry_run: bool = True) -> dict[str, Any]:
+    """Check wiki integrity and optionally fix orphan navigation."""
+    store = _store(prepare=fix and not dry_run)
+    if not fix:
+        return store.lint()
+    return {"lint": store.lint(), "fix_orphans": store.fix_orphans(dry_run=dry_run)}
 
 
 @mcp.tool()

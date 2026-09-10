@@ -212,6 +212,14 @@ WIKI_TOOL_SCHEMA = {
                 "type": "string",
                 "description": "SHA-256 revision from read for safe concurrent updates.",
             },
+            "fix": {
+                "type": "boolean",
+                "description": "For lint: explicitly enable orphan auto-fixing.",
+            },
+            "dry_run": {
+                "type": "boolean",
+                "description": "For lint fixes: preview changes without writing (default true).",
+            },
         },
         "required": ["action"],
     },
@@ -622,7 +630,7 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                         "append": {"page", "content", "note", "expected_revision"},
                         "delete": {"page", "note", "expected_revision"},
                         "reflect": {"query", "limit"},
-                        "lint": set(),
+                        "lint": {"fix", "dry_run"},
                         "log": {"limit"},
                     }
                     mcp_args = {

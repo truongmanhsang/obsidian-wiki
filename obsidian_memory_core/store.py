@@ -103,6 +103,11 @@ class MemoryStore:
     def lint(self) -> dict[str, Any]:
         return self.vault.lint()
 
+    def fix_orphans(self, dry_run: bool = False) -> dict[str, Any]:
+        """Fix orphan navigation under the shared exclusive write lock."""
+        with self._write_lock():
+            return self.vault.fix_orphans(dry_run=dry_run)
+
     def log(self, limit: int = 30) -> dict[str, Any]:
         return {"log_tail": self.vault.log_tail(limit)}
 
@@ -253,7 +258,10 @@ class MemoryStore:
         if action == "read": return self.read(kwargs["page"])
         if action == "search": return self.search(kwargs["query"], int(kwargs.get("limit", 5)))
         if action == "list": return self.list(int(kwargs.get("limit", 50)))
-        if action == "lint": return self.lint()
+        if action == "lint":
+            if kwargs.get("fix"):
+                return {"lint": self.lint(), "fix_orphans": self.fix_orphans(dry_run=bool(kwargs.get("dry_run", True)))}
+            return self.lint()
         if action == "log": return self.log(int(kwargs.get("limit", 30)))
         if action == "write": return self.write(kwargs["page"], kwargs["content"], kwargs.get("note", ""), kwargs.get("expected_revision"), bool(kwargs.get("allow_duplicate", False)))
         if action == "append": return self.append(kwargs["page"], kwargs["content"], kwargs.get("note", ""), kwargs.get("expected_revision"))
