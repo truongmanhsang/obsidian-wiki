@@ -51,7 +51,14 @@ TOKEN_RE = TOKEN_RE
 # The overview is a stable entry point, not a backlink catalog. Its inbound
 # links are still counted by lint/search, but the generated section is kept on
 # the dedicated index hub so the overview remains readable.
+# The overview itself should not accumulate a backlink catalog.
 BACKLINK_EXCLUDED_PAGES = {"concepts/obsidian-wiki-memory-system.md"}
+# Navigation pages are generated indexes, not semantic categories. They should
+# not appear in a page's "Linked from" section.
+BACKLINK_SOURCE_EXCLUDED_PAGES = {
+    "concepts/obsidian-wiki-index.md",
+    "concepts/obsidian-wiki-memory-system.md",
+}
 
 TYPE_DIRS = {
     "entity": "entities",
@@ -306,7 +313,7 @@ class WikiVault:
                     key, _, value = line.partition(":")
                     key = key.strip()
                     value = value.strip()
-                    if key in ("tags", "aliases"):
+                    if key in ("tags", "aliases", "lint_keywords"):
                         if value == "":
                             meta[key] = []
                             current_list_key = key
@@ -572,6 +579,23 @@ class WikiVault:
                 ("tags", tags_list),
                 ("aliases", aliases_list),
             ]
+            # Preserve optional hub-routing metadata supplied by the caller.
+            # These fields are intentionally outside the required frontmatter
+            # trio, but normal writes must not discard them.
+            if "lint_hub" in meta:
+                value = str(meta["lint_hub"]).strip().lower()
+                fm_pairs.append(("lint_hub", "true" if value in {"1", "true", "yes", "on"} else "false"))
+            if "lint_keywords" in meta:
+                keywords = meta["lint_keywords"]
+                if isinstance(keywords, str):
+                    raw = keywords.strip()
+                    if raw.startswith("[") and raw.endswith("]"):
+                        raw = raw[1:-1]
+                    keywords = [part.strip().strip("'\"") for part in raw.split(",") if part.strip()]
+                if isinstance(keywords, list):
+                    fm_pairs.append(("lint_keywords", [str(item).strip() for item in keywords if str(item).strip()]))
+            if "lint_priority" in meta and str(meta["lint_priority"]).strip():
+                fm_pairs.append(("lint_priority", str(meta["lint_priority"]).strip()))
             def _fmt(v):
                 return "[]" if not v else str(v)
             fm_lines = ["---"]
@@ -711,6 +735,8 @@ class WikiVault:
                 continue
             if page["ptype"] == "source":
                 continue  # transcripts quote links; they are not endorsements
+            if page["rel"] in BACKLINK_SOURCE_EXCLUDED_PAGES:
+                continue  # generated navigation is not a semantic category
             body_text = re.sub(
                 r"\n## Linked from\n(?:\n|- .*\n?)*", "\n", page["text"]
             )
@@ -1025,6 +1051,11 @@ class WikiVault:
             # immutable sources, not curated pages - skip them in link lint
             if page["ptype"] == "source":
                 continue
+            # The wiki index is generated navigation: its summaries can contain
+            # deliberately truncated quoted wikilinks, so it must not create
+            # false broken-link/orphan graph edges.
+            if page["rel"] == "concepts/obsidian-wiki-index.md":
+                continue
             # auto-generated backlink sections are navigation UI, not
             # editorial links - strip before counting
             body_text = re.sub(
@@ -1077,7 +1108,10 @@ class WikiVault:
                         continue
                     # Only credit pages explicitly named in the message.
                     for stem, rel in stems.items():
-                        if stem in _msg.lower() or rel.lower() in _msg.lower():
+                        # Require the canonical relative path. Matching only the
+                        # filename stem creates false positives when a log entry
+                        # mentions a similarly named page (e.g. a backtest title).
+                        if rel.lower() in _msg.lower():
                             log_dates[rel] = max(log_dates.get(rel, ""), _d)
             else:
                 import re as _re
@@ -1089,7 +1123,9 @@ class WikiVault:
                     if kind.upper() not in EDIT_KINDS:
                         continue
                     for stem, rel in stems.items():
-                        if stem in desc.lower() or rel.lower() in desc.lower():
+                        # Require the canonical relative path; a bare stem can
+                        # occur inside another page name and cause a false positive.
+                        if rel.lower() in desc.lower():
                             log_dates[rel] = max(log_dates.get(rel, ""), day)
         except OSError:
             pass
@@ -1320,32 +1356,12 @@ class WikiVault:
     # Auto-orphan linker (feature #3)
     # ------------------------------------------------------------------
 
-    def _hub_for_orphan(self, orphan_rel: str, title: str = "", ptype: str = "") -> str:
-        """Pick generic hub parent for an orphan — type-based only, no keyword heuristics."""
-        if not ptype:
-            try:
-                ptype = DIR_TYPES.get(orphan_rel.split("/", 1)[0], "")
-            except Exception:
-                ptype = ""
-        # Generic type -> hub mapping. All vaults have these hubs; no domain-specific keywords.
-        hub_by_type = {
-            "entity": "concepts/obsidian-wiki-index.md",
-            "person": "concepts/obsidian-wiki-index.md",
-            "concept": "concepts/obsidian-wiki-index.md",
-            "decision": "concepts/obsidian-wiki-index.md",
-            "answer": "concepts/obsidian-wiki-index.md",
-            "preference": "concepts/obsidian-wiki-index.md",
-            "environment": "environment/obsidian-vault.md",
-            "source": "concepts/obsidian-wiki-index.md",
-        }
-        hub = hub_by_type.get(ptype, "concepts/obsidian-wiki-index.md")
-        # Fallback if hub file missing (e.g. fresh vault without that hub) -> use vault root hub that always exists
-        if not (self.root / hub).exists():
-            fallback = "environment/obsidian-vault.md"
-            if (self.root / fallback).exists():
-                return fallback
-            return "concepts/obsidian-wiki-index.md"
-        return hub
+    def _hub_for_orphan(self, orphan_rel: str, title: str = "", ptype: str = "",
+                        tags: list[str] | None = None, body: str = "") -> str:
+        """Choose the best existing semantic category for an orphan page."""
+        from .lint import _hub_for_orphan as resolve_hub
+        return resolve_hub(self, orphan_rel, title=title, ptype=ptype,
+                          tags=tags, body=body)
 
     def fix_orphans(self, dry_run: bool = False) -> dict:
         """Auto-link every orphan by inserting a bullet into its hub parent."""
@@ -1366,7 +1382,11 @@ class WikiVault:
             ptype = pg.get("ptype") or ""
             body = pg.get("body") or ""
             summary = first_summary_line(body) if body else "(auto-linked orphan)"
-            hub = self._hub_for_orphan(rel, title=title, ptype=ptype)
+            tags = pg.get("meta", {}).get("tags", []) if pg else []
+            if not isinstance(tags, list):
+                tags = [str(tags)] if tags else []
+            hub = self._hub_for_orphan(rel, title=title, ptype=ptype,
+                                       tags=tags, body=body)
             if hub == rel:
                 hub = "concepts/obsidian-wiki-index.md"
             if not (self.root / hub).exists():

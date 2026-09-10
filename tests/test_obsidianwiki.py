@@ -901,7 +901,109 @@ class TestReadSearch:
 
 
 class TestLint:
-    def test_orphan_fix_uses_dedicated_memory_index_hub(self, provider):
+    def test_write_preserves_dynamic_hub_metadata(self, provider):
+        result = _call(
+            provider,
+            action="write",
+            page="concepts/markets-hub",
+            content=(
+                "---\n"
+                "lint_hub: true\n"
+                "lint_keywords: [asset, market]\n"
+                "lint_priority: 25\n"
+                "---\n\n"
+                "# Markets Hub\n\nAsset topics.\n"
+            ),
+        )
+        text = Path(result["path"]).read_text(encoding="utf-8")
+        assert "lint_hub: true" in text
+        assert "lint_keywords:" in text
+        assert "lint_priority: 25" in text
+
+    def test_orphan_fix_discovers_hub_from_frontmatter(self, provider):
+        _call(
+            provider,
+            action="write",
+            page="concepts/markets-hub",
+            content=(
+                "---\n"
+                "lint_hub: true\n"
+                "lint_keywords: [asset, market]\n"
+                "lint_priority: 100\n"
+                "---\n\n"
+                "# Markets Hub\n\nAsset topics.\n"
+            ),
+        )
+        hub = provider._get_vault()._hub_for_orphan(
+            "entities/asset-bot.md",
+            title="Asset Bot",
+            ptype="entity",
+            body="Market automation",
+        )
+        assert hub == "concepts/markets-hub.md"
+
+    def test_non_hub_page_keywords_are_ignored(self, provider):
+        _call(
+            provider,
+            action="write",
+            page="concepts/market-notes",
+            content=(
+                "---\n"
+                "lint_keywords: [asset]\n"
+                "---\n\n"
+                "# Market Notes\n\nNotes.\n"
+            ),
+        )
+        _call(provider, action="write", page="concepts/obsidian-wiki-index",
+              content="# Obsidian Wiki Index\n\nNavigation.\n")
+        assert provider._get_vault()._hub_for_orphan(
+            "entities/asset-bot.md", title="Asset Bot", body="asset"
+        ) == "concepts/obsidian-wiki-index.md"
+
+    def test_hub_priority_wins_and_path_breaks_ties(self, provider):
+        for page, priority in (
+            ("concepts/z-asset-hub", 10),
+            ("concepts/a-asset-hub", 10),
+            ("concepts/high-asset-hub", 20),
+        ):
+            _call(
+                provider,
+                action="write",
+                page=page,
+                allow_duplicate=True,
+                content=(
+                    "---\n"
+                    "lint_hub: true\n"
+                    "lint_keywords: [asset]\n"
+                    f"lint_priority: {priority}\n"
+                    "---\n\n# Hub\n"
+                ),
+            )
+        assert provider._get_vault()._hub_for_orphan(
+            "entities/asset-bot.md", title="Asset Bot", body="asset"
+        ) == "concepts/high-asset-hub.md"
+
+    def test_orphan_fix_uses_semantic_category_before_generic_index(self, provider):
+        _call(provider, action="write", page="concepts/obsidian-wiki-index",
+              content="# Obsidian Wiki Index\n\nNavigation.\n")
+        _call(provider, action="write", page="concepts/vietnam-safe-investment-channels",
+              content=(
+                  "---\n"
+                  "lint_hub: true\n"
+                  "lint_keywords: [business, investment]\n"
+                  "lint_priority: 100\n"
+                  "---\n\n"
+                  "# Vietnam Safe Investment Channels\n\nInvestment categories.\n"
+              ))
+        hub = provider._get_vault()._hub_for_orphan(
+            "answers/business-investment-comparison.md",
+            title="Business and Investment Comparison",
+            ptype="answer",
+            tags=["business", "investment"],
+        )
+        assert hub == "concepts/vietnam-safe-investment-channels.md"
+
+    def test_orphan_fix_falls_back_to_index_when_no_category_matches(self, provider):
         _call(provider, action="write", page="concepts/obsidian-wiki-index",
               content="# Obsidian Wiki Index\n\nNavigation.\n")
         assert provider._get_vault()._hub_for_orphan(

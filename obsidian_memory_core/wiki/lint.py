@@ -8,30 +8,59 @@ from .frontmatter import FRONTMATTER_RE
 from .normalize import _normalize
 from .frontmatter import _parse_aliases_list
 
-def _hub_for_orphan(vault, orphan_rel: str, title: str = "", ptype: str = "") -> str:
+
+def _as_bool(value: object) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _as_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip().lower() for item in value if str(item).strip()]
+    text = str(value or "").strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    return [item.strip().strip("'\"").lower() for item in text.split(",") if item.strip()]
+
+
+def discover_hubs(vault) -> list[dict]:
+    """Return existing, valid hub pages ordered by priority and path."""
+    hubs = []
+    for page in vault.load_pages():
+        meta = page.get("meta", {})
+        if not _as_bool(meta.get("lint_hub")):
+            continue
+        keywords = _as_list(meta.get("lint_keywords"))
+        if not keywords or not page["path"].exists():
+            continue
+        try:
+            priority = int(str(meta.get("lint_priority", "0")).strip() or "0")
+        except ValueError:
+            priority = 0
+        hubs.append({
+            "path": page["rel"],
+            "keywords": keywords,
+            "priority": priority,
+            "page": page,
+        })
+    return sorted(hubs, key=lambda hub: (-hub["priority"], hub["path"].lower()))
+
+
+def _hub_for_orphan(vault, orphan_rel: str, title: str = "", ptype: str = "",
+                    tags: list[str] | None = None, body: str = "") -> str:
     if not ptype:
         from .vault import DIR_TYPES
         try:
             ptype = DIR_TYPES.get(orphan_rel.split("/", 1)[0], "")
         except Exception:
             ptype = ""
-    hub_by_type = {
-        "entity": "concepts/obsidian-wiki-index.md",
-        "person": "concepts/obsidian-wiki-index.md",
-        "concept": "concepts/obsidian-wiki-index.md",
-        "decision": "concepts/obsidian-wiki-index.md",
-        "answer": "concepts/obsidian-wiki-index.md",
-        "preference": "concepts/obsidian-wiki-index.md",
-        "environment": "environment/obsidian-vault.md",
-        "source": "concepts/obsidian-wiki-index.md",
-    }
-    hub = hub_by_type.get(ptype, "concepts/obsidian-wiki-index.md")
-    if not (vault.root / hub).exists():
-        fallback = "environment/obsidian-vault.md"
-        if (vault.root / fallback).exists():
-            return fallback
-        return "concepts/obsidian-wiki-index.md"
-    return hub
+    haystack = " ".join([orphan_rel, title, ptype, " ".join(tags or []), body]).lower()
+    for hub in discover_hubs(vault):
+        if any(keyword in haystack for keyword in hub["keywords"]):
+            return hub["path"]
+
+    # Generic navigation fallback. LLM generation will replace this path when
+    # no semantic hub exists and generation is available.
+    return "concepts/obsidian-wiki-index.md"
 
 def lint(vault) -> dict:
     """Compatibility wrapper for WikiVault's canonical lint implementation."""
@@ -57,7 +86,11 @@ def fix_orphans(vault, dry_run: bool = False) -> dict:
         ptype = pg.get("ptype") or ""
         body = pg.get("body") or ""
         summary = first_summary_line(body) if body else "(auto-linked orphan)"
-        hub = _hub_for_orphan(vault, rel, title=title, ptype=ptype)
+        tags = pg.get("meta", {}).get("tags", []) if pg else []
+        if not isinstance(tags, list):
+            tags = [str(tags)] if tags else []
+        hub = _hub_for_orphan(vault, rel, title=title, ptype=ptype,
+                              tags=tags, body=body)
         if hub == rel:
             hub = "concepts/obsidian-wiki-index.md"
         if not (vault.root / hub).exists():
