@@ -1043,6 +1043,7 @@ class TestLint:
                                                     {"action": "lint"}))
         assert lint["clean"], lint
 
+
     def test_stale_claims_ignores_mention_in_other_page_log(self, provider):
         # Regression: a page whose stem is merely mentioned inside another
         # page's WRITE line must NOT be flagged as stale. Only a WRITE/UPDATE
@@ -1096,6 +1097,43 @@ class TestLint:
         lint = json.loads(provider.handle_tool_call("obsidian_wiki",
                                                     {"action": "lint"}))
         assert lint["clean"], lint
+
+
+class TestLLMGeneration:
+    def test_hub_proposal_rejects_unsafe_path(self):
+        from obsidian_memory_core.wiki.generation import generate_hub_proposal
+
+        proposal = generate_hub_proposal(
+            {"pages": [{"path": "entities/gold-bot.md", "title": "Gold Bot"}]},
+            run_llm=lambda _: {
+                "path": "../../secrets.md",
+                "title": "Bad",
+                "body": "# Bad\n",
+                "keywords": ["gold"],
+                "priority": 10,
+            },
+        )
+        assert proposal["error"] == "invalid_path"
+
+    def test_index_proposal_rejects_unknown_wikilink(self):
+        from obsidian_memory_core.wiki.generation import generate_index_proposal
+
+        result = generate_index_proposal(
+            [{"path": "entities/gold-bot.md", "title": "Gold Bot", "type": "entity"}],
+            run_llm=lambda _: {
+                "content": "---\ntype: index\n---\n\n[[entities/missing]]"
+            },
+        )
+        assert result["error"] == "invalid_link"
+
+    def test_llm_exception_returns_stable_error(self):
+        from obsidian_memory_core.wiki.generation import generate_hub_proposal
+
+        def fail(_):
+            raise TimeoutError("model unavailable")
+
+        result = generate_hub_proposal({}, run_llm=fail)
+        assert result["error"] == "llm_unavailable"
 
 
 class TestPrefetch:
