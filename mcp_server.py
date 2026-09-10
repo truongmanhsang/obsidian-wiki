@@ -200,7 +200,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Obsidian Wiki memory MCP server")
     parser.add_argument(
         "--vault-path",
-        help="vault path; otherwise use OBSIDIAN_VAULT_PATH or ~/Documents/agent-vault",
+        help="vault path; otherwise use OBSIDIAN_VAULT_PATH or the configured default",
     )
     args = parser.parse_args()
     if args.vault_path:

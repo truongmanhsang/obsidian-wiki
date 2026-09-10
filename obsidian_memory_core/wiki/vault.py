@@ -48,18 +48,6 @@ WIKILINK_RE = WIKILINK_RE
 FRONTMATTER_RE = FRONTMATTER_RE
 TOKEN_RE = TOKEN_RE
 
-# The overview is a stable entry point, not a backlink catalog. Its inbound
-# links are still counted by lint/search, but the generated section is kept on
-# the dedicated navigation index so the overview remains readable.
-# The overview itself should not accumulate a backlink catalog.
-BACKLINK_EXCLUDED_PAGES = {"concepts/obsidian-wiki-memory-system.md"}
-# Navigation pages are generated indexes, not semantic categories. They should
-# not appear in a page's "Linked from" section.
-BACKLINK_SOURCE_EXCLUDED_PAGES = {
-    "concepts/obsidian-wiki-index.md",
-    "concepts/obsidian-wiki-memory-system.md",
-}
-
 TYPE_DIRS = {
     "entity": "entities",
     "person": "people",
@@ -658,14 +646,6 @@ class WikiVault:
                 m = FRONTMATTER_RE.match(raw)
                 fm_text = m.group(0) if m else ""
                 body = raw[m.end():] if m else raw
-                if target_path.relative_to(self.root).as_posix() in BACKLINK_EXCLUDED_PAGES:
-                    if "\n## Linked from" in body:
-                        body = body[:body.index("\n## Linked from")].rstrip() + "\n"
-                    elif body.lstrip().startswith("## Linked from"):
-                        body = body[body.find("## Linked from"):]
-                        body = "\n" if not body else "\n"
-                    _atomic_write_text(target_path, fm_text + body)
-                    return
                 stem = target_path.stem
                 inbound = sorted(self._inbound_links(stem))
                 header = "## Linked from"
@@ -761,8 +741,6 @@ class WikiVault:
                 continue
             if page["ptype"] == "source":
                 continue  # transcripts quote links; they are not endorsements
-            if page["rel"] in BACKLINK_SOURCE_EXCLUDED_PAGES:
-                continue  # generated navigation is not a semantic category
             body_text = re.sub(
                 r"\n## Linked from\n(?:\n|- .*\n?)*", "\n", page["text"]
             )
@@ -1076,11 +1054,6 @@ class WikiVault:
             # raw session transcripts quote wiki syntax from chat; they are
             # immutable sources, not curated pages - skip them in link lint
             if page["ptype"] == "source":
-                continue
-            # The wiki index is generated navigation: its summaries can contain
-            # deliberately truncated quoted wikilinks, so it must not create
-            # false broken-link/orphan graph edges.
-            if page["rel"] == "concepts/obsidian-wiki-index.md":
                 continue
             # auto-generated backlink sections are navigation UI, not
             # editorial links - strip before counting

@@ -654,13 +654,13 @@ def _call(p, **args):
 
 
 class TestWritePath:
-    def test_memory_system_overview_does_not_accumulate_generated_backlinks(self, provider):
+    def test_memory_system_overview_accumulates_backlinks_like_any_curated_page(self, provider):
         _call(provider, action="write", page="concepts/obsidian-wiki-memory-system",
               content="# Obsidian Wiki Memory System\n\nOverview.\n")
         _call(provider, action="write", page="entities/overview-client",
               content="# Overview Client\n\nLinks to [[concepts/obsidian-wiki-memory-system]].\n")
         overview = provider._get_vault().root / "concepts/obsidian-wiki-memory-system.md"
-        assert "## Linked from" not in overview.read_text(encoding="utf-8")
+        assert "[[entities/overview-client.md|overview-client]]" in overview.read_text(encoding="utf-8")
 
     def test_write_creates_page_with_derived_frontmatter(self, provider):
         r = _call(provider, action="write", page="entities/A",
@@ -1426,6 +1426,24 @@ class TestSessionExtractReport:
 
 
 class TestIngestJobManager:
+    def test_default_job_db_path_uses_platform_state_directory(self, monkeypatch, tmp_path):
+        from obsidian_memory_core import jobs
+
+        monkeypatch.delenv("WIKI_JOB_DB", raising=False)
+        monkeypatch.setattr(jobs.Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setattr(jobs.sys, "platform", "linux")
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
+        assert jobs._default_job_db_path() == tmp_path / "xdg-state" / "obsidian-memory" / "jobs.db"
+
+        monkeypatch.setattr(jobs.sys, "platform", "win32")
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local-app-data"))
+        assert jobs._default_job_db_path() == tmp_path / "local-app-data" / "obsidian-memory" / "jobs.db"
+
+        monkeypatch.setattr(jobs.sys, "platform", "darwin")
+        monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+        monkeypatch.delenv("LOCALAPPDATA", raising=False)
+        assert jobs._default_job_db_path() == tmp_path / "Library" / "Application Support" / "obsidian-memory" / "jobs.db"
+
     def test_completed_early_or_failed_jobs_are_retryable(self):
         from obsidian_memory_core.jobs import IngestJobManager
 

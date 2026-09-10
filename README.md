@@ -419,8 +419,8 @@ worker and sends capture/extraction output through the server-owned vault
 configuration. `wiki_turn_hook.py` is now a thin event client that submits a
 completed-session job instead of writing the vault itself.
 
-Job/request metadata is persisted in the server's local `WIKI_JOB_DB`
-(default: `$HOME/Library/Application Support/obsidian-memory/jobs.db`), so a
+Job/request metadata is persisted in the server's local `WIKI_JOB_DB`.
+When unset, it uses the platform's standard per-user state directory, so a
 repeated `request_id` remains idempotent after a server restart. Runtime job
 state is deliberately kept outside the iCloud vault.
 
@@ -455,7 +455,7 @@ Verify the service is running on port 8765:
 docker compose logs -f
 ```
 
-The Docker container will map port `8765` and automatically start on system boot. Note that your iCloud vault path (`~/Library/Mobile Documents/iCloud~md~obsidian/Documents/agent-vault`) is hardcoded in the `docker-compose.yml`. Update it if your vault is stored elsewhere.
+The Docker container will map port `8765` and automatically start on system boot. Set `OBSIDIAN_VAULT_HOST_PATH` to the host vault path before running Compose; the container always mounts it at `/vault`.
 
 After the server is running, restart Hermes so it rediscovers the HTTP MCP server:
 

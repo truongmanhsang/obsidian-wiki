@@ -11,8 +11,8 @@ services:
       # Internal path for the job queue SQLite database
       - WIKI_JOB_DB=/data/jobs.db
     volumes:
-      # Map the iCloud vault to the container (update this if your vault is elsewhere)
-      - ~/Library/Mobile Documents/iCloud~md~obsidian/Documents/agent-vault:/vault
+      # Set OBSIDIAN_VAULT_HOST_PATH to the host vault before starting.
+      - ${OBSIDIAN_VAULT_HOST_PATH:?Set OBSIDIAN_VAULT_HOST_PATH to the host vault}:/vault
       # Persist the job database outside the container
       - obsidian-memory-data:/data
 

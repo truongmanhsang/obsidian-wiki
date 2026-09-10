@@ -16,6 +16,21 @@ from typing import Any
 from .store import MemoryStore
 
 
+def _default_job_db_path() -> Path:
+    """Return the platform's conventional per-user state path."""
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    elif sys.platform.startswith("win"):
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    else:
+        base = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
+    return base / "obsidian-memory" / "jobs.db"
+
+
+def _hermes_home() -> Path:
+    return Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+
+
 class IngestJobManager:
     """Serialize capture/extraction jobs and make retries idempotent."""
 
@@ -23,7 +38,7 @@ class IngestJobManager:
         self.store = store
         self.plugin_root = plugin_root or Path(__file__).resolve().parents[1]
         self._lock = threading.Lock()
-        self.state_path = state_path or Path(os.environ.get("WIKI_JOB_DB", str(Path.home() / "Library/Application Support/obsidian-memory/jobs.db")))
+        self.state_path = state_path or Path(os.environ.get("WIKI_JOB_DB") or _default_job_db_path())
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(str(self.state_path), check_same_thread=False)
         try:
@@ -39,7 +54,7 @@ class IngestJobManager:
 
     def recover_unsubmitted_boundaries(self, limit: int = 100) -> list[dict[str, Any]]:
         """Queue ended non-cron sessions whose boundary event was lost."""
-        state_db = Path(os.environ.get("HERMES_STATE_DB", str(Path.home() / ".hermes" / "state.db")))
+        state_db = Path(os.environ.get("HERMES_STATE_DB") or _hermes_home() / "state.db")
         conn = sqlite3.connect(f"file:{state_db}?mode=ro", uri=True)
         try:
             rows = conn.execute(
@@ -141,7 +156,7 @@ class IngestJobManager:
         configured = os.environ.get("HERMES_PYTHON")
         if configured:
             return configured
-        candidate = Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "python3"
+        candidate = _hermes_home() / "hermes-agent" / "venv" / "bin" / "python3"
         return str(candidate) if candidate.is_file() else sys.executable
 
     def _set(self, job_id: str, **fields: Any) -> None:
