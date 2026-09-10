@@ -17,6 +17,7 @@ from obsidian_memory_core.wiki.index import INDEX_HEADER, first_summary_line, _e
 from obsidian_memory_core.wiki.log import LOG_HEADER, append_log as _append_log_fn, log_tail as _log_tail_fn, migrate_log_md_to_db, _ensure_db, _iter_log_rows  # noqa: F401
 from obsidian_memory_core.wiki.dedup import detect_duplicates as _detect_duplicates_fn
 from obsidian_memory_core.wiki.lint import lint as _lint_fn, _hub_for_orphan as _hub_fn, fix_orphans as _fix_orphans_fn
+from obsidian_memory_core.wiki.generation import generate_index_proposal
 from obsidian_memory_core.wiki.search import search as _search_fn, prefetch_context as _prefetch_fn
 
 logger = logging.getLogger(__name__)
@@ -406,6 +407,50 @@ class WikiVault:
                 counts[page["ptype"]] += 1
         return counts
 
+    def is_blank_vault(self) -> bool:
+        """Return whether the vault has no curated pages yet."""
+        return not any(page["ptype"] != "source" for page in self.load_pages())
+
+    def _index_manifest(self) -> list[dict]:
+        """Build the authoritative page manifest supplied to the index LLM."""
+        manifest = []
+        for page in self.load_pages():
+            if page["ptype"] == "source":
+                continue
+            aliases = page["meta"].get("aliases", [])
+            tags = page["meta"].get("tags", [])
+            manifest.append({
+                "path": page["rel"],
+                "title": page["title"],
+                "type": page["ptype"],
+                "aliases": aliases if isinstance(aliases, list) else [str(aliases)],
+                "tags": tags if isinstance(tags, list) else [str(tags)],
+                "lint_hub": str(page["meta"].get("lint_hub", "")).lower() in {"1", "true", "yes", "on"},
+                "summary": first_summary_line(page["body"]),
+            })
+        return sorted(manifest, key=lambda page: page["path"].lower())
+
+    def ensure_index_generated(self, was_blank: bool = False, run_llm=None) -> dict:
+        """Generate a missing/blank-vault index while preserving valid indexes."""
+        if self.index_path.exists() and not was_blank:
+            return {"generated": False, "reused": True, "fallback": False}
+        manifest = self._index_manifest()
+        proposal = generate_index_proposal(manifest, run_llm=run_llm)
+        if not proposal.get("error"):
+            _atomic_write_text(self.index_path, proposal["content"])
+            self.append_log("INDEX_GENERATED", f"index_path={self.index_path}", quiet=True)
+            return {"generated": True, "reused": False, "fallback": False}
+        # Keep writes reliable when the configured LLM is unavailable or
+        # produces invalid content. The deterministic renderer is the fallback.
+        self.rebuild_index()
+        self.append_log("LINT", f"index generation fallback: {proposal['error']}", quiet=True)
+        return {
+            "generated": False,
+            "reused": False,
+            "fallback": True,
+            "error": proposal["error"],
+        }
+
     # ------------------------------------------------------------------
     # Write path (page + index + log kept atomic-by-convention)
     # ------------------------------------------------------------------
@@ -444,6 +489,7 @@ class WikiVault:
             )
         if auto_quiet:
             quiet_log = ptype == "source"
+        was_blank = self.is_blank_vault() if ptype != "source" else False
 
         meta, body = self.parse_frontmatter(content)
         fm_type = meta.get("type", "")
@@ -673,7 +719,6 @@ class WikiVault:
                     _refresh_backlinks(pg["path"])
 
         inbound = self._inbound_links(path.stem, exclude=path)
-        self.rebuild_index()
         # Bulk/automated writes (session capture, pipeline extract) log
         # quietly - one aggregated daily line instead of one line per page.
         self.append_log(
@@ -692,6 +737,8 @@ class WikiVault:
                 pass
             finally:
                 self._auto_heal_in_progress = False
+        if ptype != "source":
+            self.ensure_index_generated(was_blank=was_blank)
         return {
             "status": "created" if is_new else "updated",
             "path": str(path),
@@ -715,7 +762,6 @@ class WikiVault:
             raise WikiVaultError(f"page not found: {rel}")
         inbound = sorted(self._inbound_links(path.stem, exclude=path))
         path.unlink()
-        self.rebuild_index()
         self.append_log("DELETE", note or f"{rel_path.as_posix()} deleted")
         return {
             "status": "deleted",

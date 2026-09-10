@@ -254,8 +254,6 @@ def fix_orphans(vault, dry_run: bool = False, run_llm=None) -> dict:
         if text != original:
             hub_path.write_text(text, encoding="utf-8")
             hubs_touched.append(hub_rel)
-    if fixed:
-        vault.rebuild_index()
     lint_after = lint(vault)
     broken = lint_after.get("problems", {}).get("broken_links", [])
     return {

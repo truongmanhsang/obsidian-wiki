@@ -674,7 +674,7 @@ class TestWritePath:
                   content="# x\n\nnope nope nope\n")
         assert "error" in r and "read-only" in r["error"]
 
-    def test_delete_requires_revision_and_updates_index_log(self, provider):
+    def test_delete_requires_revision_and_reuses_index_log(self, provider):
         created = _call(provider, action="write", page="entities/delete-me",
                         content="# Delete Me\n\nTemporary page.\n")
         revision = _call(provider, action="read", page="entities/delete-me")["revision"]
@@ -684,7 +684,7 @@ class TestWritePath:
                         expected_revision=revision, note="test deletion")
         assert deleted["status"] == "deleted"
         assert not __import__("pathlib").Path(created["path"]).exists()
-        assert "delete-me" not in provider._get_vault().index_path.read_text(encoding="utf-8")
+        assert "delete-me" in provider._get_vault().index_path.read_text(encoding="utf-8")
         assert "DELETE:" in provider._get_vault().log_tail(30)
 
     def test_delete_rejects_sources_and_stale_revision(self, provider):
@@ -1179,6 +1179,88 @@ class TestLLMHubLifecycle:
         _call(provider, action="write", page="entities/trade-bot",
               content="# Trade Bot\n\nTrade system.\n")
         assert calls == []
+
+
+class TestLLMIndexLifecycle:
+    def test_blank_first_write_replaces_skeleton_index_with_llm_index(
+        self, provider, monkeypatch
+    ):
+        lint_module = importlib.import_module("obsidian_memory_core.wiki.lint")
+        vault = provider._get_vault()
+
+        monkeypatch.setattr(
+            lint_module,
+            "generate_hub_proposal",
+            lambda *args, **kwargs: {
+                "path": "concepts/page-hub.md",
+                "title": "Page Hub",
+                "body": "# Page Hub\n\nPage topics.\n",
+                "keywords": ["page"],
+                "priority": 10,
+            },
+        )
+        generated = []
+
+        def fake_index(manifest, run_llm=None):
+            generated.append(manifest)
+            links = "\n".join(
+                f"- [[{page['path']}|{page['title']}]]" for page in manifest
+            )
+            return {
+                "content": (
+                    "---\ntype: index\n---\n\n"
+                    "# LLM Index\n\n"
+                    f"{links}\n"
+                )
+            }
+
+        monkeypatch.setitem(
+            type(vault).ensure_index_generated.__globals__,
+            "generate_index_proposal",
+            fake_index,
+        )
+        _call(provider, action="write", page="entities/first-page",
+              content="# First Page\n\nFirst content.\n")
+        index = (provider._get_vault().root / "index.md").read_text(encoding="utf-8")
+        assert "# LLM Index" in index
+        assert generated
+
+    def test_existing_index_is_reused_after_new_page(self, provider, monkeypatch):
+        lint_module = importlib.import_module("obsidian_memory_core.wiki.lint")
+        vault = provider._get_vault()
+        monkeypatch.setattr(
+            lint_module,
+            "generate_hub_proposal",
+            lambda *args, **kwargs: {
+                "path": "concepts/page-hub.md",
+                "title": "Page Hub",
+                "body": "# Page Hub\n\nPage topics.\n",
+                "keywords": ["page"],
+                "priority": 10,
+            },
+        )
+        calls = []
+
+        def fake_index(manifest, run_llm=None):
+            calls.append(manifest)
+            links = "\n".join(
+                f"- [[{page['path']}|{page['title']}]]" for page in manifest
+            )
+            return {"content": f"---\ntype: index\n---\n\n# LLM Index\n\n{links}\n"}
+
+        monkeypatch.setitem(
+            type(vault).ensure_index_generated.__globals__,
+            "generate_index_proposal",
+            fake_index,
+        )
+        _call(provider, action="write", page="entities/first-page",
+              content="# First Page\n\nFirst content.\n")
+        index_path = provider._get_vault().root / "index.md"
+        original = index_path.read_text(encoding="utf-8")
+        _call(provider, action="write", page="entities/second-page",
+              content="# Second Page\n\nPage content.\n")
+        assert len(calls) == 1
+        assert index_path.read_text(encoding="utf-8") == original
 
 
 class TestPrefetch:
