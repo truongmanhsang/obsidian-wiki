@@ -17,7 +17,7 @@ enforces wiki discipline automatically, so the agent cannot let the vault rot.
 |------|-----|
 | Index-first | prefetch() scores pages against each turn; system prompt carries a live catalog |
 | Optional reflection | prefetch() can call Hermes' configured LLM to synthesize relevant pages |
-| No drift | every `write` regenerates index.md stats/bullets and appends to log.db/log.md |
+| Stable navigation | the LLM generates missing hubs/indexes; existing hubs/indexes are reused |
 | Typed pages | folder decides type: entities/, concepts/, sources/, answers/ |
 | Read-only sources | write_page rejects anything under sources/ |
 | No orphans | lint reports pages with zero inbound wikilinks |
@@ -30,9 +30,42 @@ enforces wiki discipline automatically, so the agent cannot let the vault rot.
 - list - stats + catalog
 - reflect - synthesize relevant wiki pages with Hermes' configured LLM
 - write - create/update page; frontmatter `type`/`updated` derived from
-  folder and stamped automatically; index + log updated in the same call
-- lint - orphans, broken links, missing frontmatter, stale claims
+  folder and stamped automatically; log updated in the same call, with
+  navigation generated only when missing
+- lint - orphans, broken links, missing frontmatter, stale claims; optional orphan auto-fix
 - log - recent operation tail
+
+### LLM-generated navigation
+
+Only semantic hub pages carry routing metadata:
+
+```yaml
+---
+type: concept
+lint_hub: true
+lint_keywords: [trade, trading, freqtrade, mt5]
+lint_priority: 100
+---
+```
+
+On the first meaningful write to a blank vault, the configured LLM generates a
+missing semantic hub and replaces the untouched skeleton index. In an
+established vault, existing hubs and `index.md` are reused. The LLM generates a
+new hub only when no existing hub matches an orphan, and generates an index only
+when the index is missing. If generation fails, the page write succeeds and the
+deterministic fallback is used.
+
+Preview orphan fixes without changing the vault:
+
+```json
+{"action":"lint","fix":true,"dry_run":true}
+```
+
+Apply validated orphan fixes explicitly:
+
+```json
+{"action":"lint","fix":true,"dry_run":false}
+```
 
 ## Config (config.yaml)
 
@@ -750,7 +783,7 @@ possible.
 | `memory_read` | `page` | Read a page and return its `revision` |
 | `memory_list` | optional `limit` | Return catalog, types, and statistics |
 | `memory_reflect` | `query`, optional `limit` | Synthesize relevant wiki pages with Hermes' configured LLM |
-| `memory_lint` | none | Check links, orphans, and wiki health |
+| `memory_lint` | optional `fix`, `dry_run` | Check wiki health; optionally preview/apply orphan fixes (`dry_run` defaults to true) |
 | `memory_log` | optional `limit` | Return recent operation logs |
 | `memory_write` | `page`, `content`, optional `note`, `expected_revision` | Create or safely update a page; use read-then-write for existing pages |
 | `memory_ingest_submit` | optional `request_id`, `session_id` | Queue centralized session capture/extraction |

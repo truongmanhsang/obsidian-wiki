@@ -54,14 +54,23 @@ def _matching_hub(hubs: list[dict], haystack: str) -> str | None:
 
 
 def _hub_for_orphan(vault, orphan_rel: str, title: str = "", ptype: str = "",
-                    tags: list[str] | None = None, body: str = "") -> str:
+                    tags: list[str] | None = None,
+                    aliases: list[str] | None = None,
+                    body: str = "") -> str:
     if not ptype:
         from .vault import DIR_TYPES
         try:
             ptype = DIR_TYPES.get(orphan_rel.split("/", 1)[0], "")
         except Exception:
             ptype = ""
-    haystack = " ".join([orphan_rel, title, ptype, " ".join(tags or []), body]).lower()
+    haystack = " ".join([
+        orphan_rel,
+        title,
+        ptype,
+        " ".join(tags or []),
+        " ".join(aliases or []),
+        body,
+    ]).lower()
     hub = _matching_hub(discover_hubs(vault), haystack)
     if hub is not None:
         return hub
@@ -110,7 +119,12 @@ def fix_orphans(vault, dry_run: bool = False, run_llm=None) -> dict:
         tags = pg.get("meta", {}).get("tags", []) if pg else []
         if not isinstance(tags, list):
             tags = [str(tags)] if tags else []
-        haystack = " ".join([rel, title, ptype, " ".join(tags), body]).lower()
+        aliases = pg.get("meta", {}).get("aliases", []) if pg else []
+        if not isinstance(aliases, list):
+            aliases = [str(aliases)] if aliases else []
+        haystack = " ".join([
+            rel, title, ptype, " ".join(tags), " ".join(aliases), body
+        ]).lower()
         hub = _matching_hub(hub_candidates, haystack)
         generated_hub = None
         if hub is not None:

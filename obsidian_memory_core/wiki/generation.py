@@ -162,15 +162,22 @@ def _validate_index(content: object, manifest: list[dict[str, Any]]) -> dict[str
         return _error("invalid_frontmatter")
     if not isinstance(metadata, dict) or str(metadata.get("type", "")).lower() != "index":
         return _error("invalid_frontmatter")
+    required = ("title", "updated", "tags")
+    if any(not str(metadata.get(key, "")).strip() for key in required):
+        return _error("invalid_frontmatter")
     manifest_paths = {
         _canonical_link(str(page.get("path", "")))
         for page in manifest
         if page.get("path")
     }
-    links = {_canonical_link(link) for link in WIKILINK_RE.findall(content)}
+    link_paths = [_canonical_link(link) for link in WIKILINK_RE.findall(content)]
+    links = set(link_paths)
     unknown = sorted(link for link in links if link not in manifest_paths)
     if unknown:
         return _error("invalid_link")
+    duplicates = sorted({link for link in links if link_paths.count(link) > 1})
+    if duplicates:
+        return _error("duplicate_link")
     if manifest_paths - links:
         return _error("missing_page")
     return {"content": content}

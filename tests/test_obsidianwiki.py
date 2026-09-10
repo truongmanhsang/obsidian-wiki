@@ -29,6 +29,20 @@ class FakeEmbedder:
         return vectors
 
 
+@pytest.fixture(autouse=True)
+def disable_live_navigation_llm(monkeypatch):
+    """Keep repository tests deterministic and free of external model calls."""
+    try:
+        from agent import oneshot
+    except ImportError:
+        return
+
+    def fail(_prompt, **_kwargs):
+        raise RuntimeError("live navigation LLM disabled in tests")
+
+    monkeypatch.setattr(oneshot, "run_oneshot", fail)
+
+
 # The plugin installs to $HERMES_HOME/plugins/obsidianwiki/, which pytest
 # redirects away (HERMES_HOME -> tmp). Load the module by its real install
 # path instead of going through plugin discovery.
@@ -960,6 +974,26 @@ class TestLint:
             "entities/asset-bot.md", title="Asset Bot", body="asset"
         ) == "concepts/obsidian-wiki-index.md"
 
+    def test_hub_matching_includes_page_aliases(self, provider):
+        _call(
+            provider,
+            action="write",
+            page="concepts/commodities-hub",
+            content=(
+                "---\n"
+                "lint_hub: true\n"
+                "lint_keywords: [commodities]\n"
+                "---\n\n"
+                "# Commodities Hub\n\nCommodity topics.\n"
+            ),
+        )
+        assert provider._get_vault()._hub_for_orphan(
+            "entities/xauusd-bot.md",
+            title="Gold Bot",
+            ptype="entity",
+            aliases=["Commodities"],
+        ) == "concepts/commodities-hub.md"
+
     def test_hub_priority_wins_and_path_breaks_ties(self, provider):
         for page, priority in (
             ("concepts/z-asset-hub", 10),
@@ -1121,10 +1155,37 @@ class TestLLMGeneration:
         result = generate_index_proposal(
             [{"path": "entities/gold-bot.md", "title": "Gold Bot", "type": "entity"}],
             run_llm=lambda _: {
-                "content": "---\ntype: index\n---\n\n[[entities/missing]]"
+                "content": (
+                    "---\n"
+                    "title: Agent Vault Index\n"
+                    "type: index\n"
+                    "updated: 2026-09-10\n"
+                    "tags: [wiki, index]\n"
+                    "---\n\n"
+                    "[[entities/missing]]"
+                )
             },
         )
         assert result["error"] == "invalid_link"
+
+    def test_index_proposal_rejects_duplicate_page_links(self):
+        from obsidian_memory_core.wiki.generation import generate_index_proposal
+
+        result = generate_index_proposal(
+            [{"path": "entities/gold-bot.md", "title": "Gold Bot", "type": "entity"}],
+            run_llm=lambda _: {
+                "content": (
+                    "---\n"
+                    "title: Agent Vault Index\n"
+                    "type: index\n"
+                    "updated: 2026-09-10\n"
+                    "tags: [wiki, index]\n"
+                    "---\n\n"
+                    "[[entities/gold-bot]]\n[[entities/gold-bot]]"
+                )
+            },
+        )
+        assert result["error"] == "duplicate_link"
 
     def test_llm_exception_returns_stable_error(self):
         from obsidian_memory_core.wiki.generation import generate_hub_proposal
@@ -1208,7 +1269,12 @@ class TestLLMIndexLifecycle:
             )
             return {
                 "content": (
-                    "---\ntype: index\n---\n\n"
+                    "---\n"
+                    "title: Agent Vault Index\n"
+                    "type: index\n"
+                    "updated: 2026-09-10\n"
+                    "tags: [wiki, index]\n"
+                    "---\n\n"
                     "# LLM Index\n\n"
                     f"{links}\n"
                 )
@@ -1246,7 +1312,18 @@ class TestLLMIndexLifecycle:
             links = "\n".join(
                 f"- [[{page['path']}|{page['title']}]]" for page in manifest
             )
-            return {"content": f"---\ntype: index\n---\n\n# LLM Index\n\n{links}\n"}
+            return {
+                "content": (
+                    "---\n"
+                    "title: Agent Vault Index\n"
+                    "type: index\n"
+                    "updated: 2026-09-10\n"
+                    "tags: [wiki, index]\n"
+                    "---\n\n"
+                    "# LLM Index\n\n"
+                    f"{links}\n"
+                )
+            }
 
         monkeypatch.setitem(
             type(vault).ensure_index_generated.__globals__,
@@ -1261,6 +1338,52 @@ class TestLLMIndexLifecycle:
               content="# Second Page\n\nPage content.\n")
         assert len(calls) == 1
         assert index_path.read_text(encoding="utf-8") == original
+
+    def test_missing_index_in_established_vault_is_generated(self, provider, monkeypatch):
+        lint_module = importlib.import_module("obsidian_memory_core.wiki.lint")
+        vault = provider._get_vault()
+        monkeypatch.setattr(
+            lint_module,
+            "generate_hub_proposal",
+            lambda *args, **kwargs: {
+                "path": "concepts/page-hub.md",
+                "title": "Page Hub",
+                "body": "# Page Hub\n\nPage topics.\n",
+                "keywords": ["page"],
+                "priority": 10,
+            },
+        )
+        _call(provider, action="write", page="entities/first-page",
+              content="# First Page\n\nFirst content.\n")
+        vault.index_path.unlink()
+        vault.ensure_skeleton()
+        calls = []
+
+        def fake_index(manifest, run_llm=None):
+            calls.append(manifest)
+            return {
+                "content": (
+                    "---\n"
+                    "title: Agent Vault Index\n"
+                    "type: index\n"
+                    "updated: 2026-09-10\n"
+                    "tags: [wiki, index]\n"
+                    "---\n\n"
+                    "# Recreated LLM Index\n"
+                    "- [[entities/first-page|First Page]]\n"
+                    "- [[concepts/page-hub|Page Hub]]\n"
+                )
+            }
+
+        monkeypatch.setitem(
+            type(vault).ensure_index_generated.__globals__,
+            "generate_index_proposal",
+            fake_index,
+        )
+        _call(provider, action="write", page="entities/second-page",
+              content="# Second Page\n\nSecond content.\n")
+        assert len(calls) == 1
+        assert "# Recreated LLM Index" in vault.index_path.read_text(encoding="utf-8")
 
 
 def test_mcp_memory_lint_accepts_fix_and_dry_run(monkeypatch, tmp_path):
@@ -1300,6 +1423,26 @@ def test_mcp_provider_forwards_lint_fix_arguments(monkeypatch, tmp_path):
         "tool": "memory_lint",
         "args": {"fix": True, "dry_run": False},
     }
+
+
+def test_direct_lint_fix_defaults_to_dry_run(monkeypatch, tmp_path):
+    mod = _load_module()
+    provider = mod.ObsidianWikiMemoryProvider({
+        "vault_path": str(tmp_path / "vault"),
+        "access_mode": "direct",
+    })
+    provider.initialize(session_id="test")
+    calls = []
+    monkeypatch.setattr(
+        provider._get_vault(),
+        "fix_orphans",
+        lambda dry_run=False: calls.append(dry_run) or {"fixed": 0},
+    )
+    result = json.loads(provider.handle_tool_call("obsidian_wiki", {
+        "action": "lint", "fix": True,
+    }))
+    assert result["fix_orphans"] == {"fixed": 0}
+    assert calls == [True]
 
 
 class TestPrefetch:

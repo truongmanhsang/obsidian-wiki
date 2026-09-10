@@ -19,7 +19,7 @@ tags:
 > [!info] Rule number 1
 > Read this file BEFORE querying to know what the wiki contains. The index is
 > the only map, no vector search needed. This file is maintained automatically
-> by the obsidianwiki memory plugin after every page write.
+> by the obsidianwiki memory plugin when navigation is first initialized.
 
 """
 

@@ -248,6 +248,10 @@ class WikiVault:
             pass
         if not self.index_path.exists():
             self.rebuild_index()
+            # Initialization may have created a placeholder for an otherwise
+            # established vault. The next meaningful write may replace it
+            # with a validated LLM-generated index.
+            self._index_created_by_skeleton = True
 
     def safe_resolve(self, rel: str) -> Path:
         """Resolve rel inside the vault; raise on escape attempts."""
@@ -432,17 +436,23 @@ class WikiVault:
 
     def ensure_index_generated(self, was_blank: bool = False, run_llm=None) -> dict:
         """Generate a missing/blank-vault index while preserving valid indexes."""
-        if self.index_path.exists() and not was_blank:
+        skeleton_index = bool(getattr(self, "_index_created_by_skeleton", False))
+        bootstrap_done = bool(getattr(self, "_bootstrap_index_generated", False))
+        if self.index_path.exists() and not skeleton_index and (not was_blank or bootstrap_done):
             return {"generated": False, "reused": True, "fallback": False}
         manifest = self._index_manifest()
         proposal = generate_index_proposal(manifest, run_llm=run_llm)
         if not proposal.get("error"):
             _atomic_write_text(self.index_path, proposal["content"])
+            self._index_created_by_skeleton = False
+            self._bootstrap_index_generated = True
             self.append_log("INDEX_GENERATED", f"index_path={self.index_path}", quiet=True)
             return {"generated": True, "reused": False, "fallback": False}
         # Keep writes reliable when the configured LLM is unavailable or
         # produces invalid content. The deterministic renderer is the fallback.
         self.rebuild_index()
+        self._index_created_by_skeleton = False
+        self._bootstrap_index_generated = True
         self.append_log("LINT", f"index generation fallback: {proposal['error']}", quiet=True)
         return {
             "generated": False,
@@ -452,14 +462,14 @@ class WikiVault:
         }
 
     # ------------------------------------------------------------------
-    # Write path (page + index + log kept atomic-by-convention)
+    # Write path (page/navigation + log kept atomic-by-convention)
     # ------------------------------------------------------------------
 
     def write_page(self, rel: str, content: str, note: str = "",
                    allow_source: bool = False,
                    quiet_log: bool | None = None,
                    allow_duplicate: bool = False) -> dict:
-        """Write a page + rebuild index + log.
+        """Write a page, maintain navigation when needed, and append a log entry.
 
         quiet_log: True -> aggregated daily log line (bulk ops); False ->
         one explicit line (curated edits); None -> auto (True for sources/,
@@ -1406,135 +1416,16 @@ class WikiVault:
     # ------------------------------------------------------------------
 
     def _hub_for_orphan(self, orphan_rel: str, title: str = "", ptype: str = "",
-                        tags: list[str] | None = None, body: str = "") -> str:
+                        tags: list[str] | None = None,
+                        aliases: list[str] | None = None,
+                        body: str = "") -> str:
         """Choose the best existing semantic category for an orphan page."""
         from .lint import _hub_for_orphan as resolve_hub
         return resolve_hub(self, orphan_rel, title=title, ptype=ptype,
-                          tags=tags, body=body)
+                          tags=tags, aliases=aliases, body=body)
 
     def fix_orphans(self, dry_run: bool = False, run_llm=None) -> dict:
         return _fix_orphans_fn(self, dry_run=dry_run, run_llm=run_llm)
-
-    def _legacy_fix_orphans(self, dry_run: bool = False) -> dict:
-        """Auto-link every orphan by inserting a bullet into its hub parent."""
-        lint = self.lint()
-        orphans = lint.get("problems", {}).get("orphans", []) or []
-        if not orphans:
-            return {"orphans": 0, "fixed": 0, "dry_run": dry_run, "plan": [], "hubs": {}}
-        pages = self.load_pages()
-        by_rel = {p["rel"]: p for p in pages}
-        orphan_hub = "concepts/obsidian-wiki-index.md"
-        hub_groups = {}
-        plan = []
-        for rel in sorted(orphans):
-            if rel == orphan_hub:
-                continue
-            pg = by_rel.get(rel, {})
-            title = pg.get("title") or Path(rel).stem
-            ptype = pg.get("ptype") or ""
-            body = pg.get("body") or ""
-            summary = first_summary_line(body) if body else "(auto-linked orphan)"
-            tags = pg.get("meta", {}).get("tags", []) if pg else []
-            if not isinstance(tags, list):
-                tags = [str(tags)] if tags else []
-            hub = self._hub_for_orphan(rel, title=title, ptype=ptype,
-                                       tags=tags, body=body)
-            if hub == rel:
-                hub = "concepts/obsidian-wiki-index.md"
-            if not (self.root / hub).exists():
-                fallback = "concepts/obsidian-wiki-index.md"
-                if (self.root / fallback).exists():
-                    hub = fallback
-                else:
-                    continue
-            entry = {"orphan": rel, "title": title, "summary": summary, "hub": hub}
-            plan.append(entry)
-            hub_groups.setdefault(hub, []).append(entry)
-        if dry_run:
-            return {
-                "orphans": len(orphans),
-                "fixed": 0,
-                "dry_run": True,
-                "plan": plan,
-                "hubs": {h: [e["orphan"] for e in v] for h, v in hub_groups.items()},
-            }
-        fixed = 0
-        hubs_touched = []
-        for hub_rel, entries in hub_groups.items():
-            hub_path = self.root / hub_rel
-            try:
-                text = hub_path.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            original = text
-            for entry in entries:
-                orphan_rel = entry["orphan"]
-                title = entry["title"]
-                summary = entry["summary"]
-                rel_no_md = orphan_rel[:-3] if orphan_rel.lower().endswith(".md") else orphan_rel
-                stem_lower = Path(orphan_rel).stem.lower()
-                already = False
-                for existing_link in WIKILINK_RE.findall(text):
-                    es = existing_link.strip().split("/")[-1].strip()
-                    es = re.sub(r"\.md$", "", es, flags=re.IGNORECASE).lower()
-                    if es == stem_lower:
-                        already = True
-                        break
-                if already:
-                    continue
-                bullet = f"- [[{rel_no_md}|{title}]] - {summary}"
-                auto_header = "## Auto-linked"
-                related_header = "## Related"
-                linked_header = "## Linked from"
-                if auto_header in text:
-                    idx2 = text.index(auto_header)
-                    header_end = text.index("\n", idx2) + 1 if "\n" in text[idx2:] else len(text)
-                    next_heading = None
-                    for m in re.finditer(r"\n## ", text[header_end:]):
-                        next_heading = header_end + m.start()
-                        break
-                    insert_at = next_heading if next_heading is not None else len(text)
-                    before = text[:insert_at].rstrip()
-                    after_text = text[insert_at:]
-                    text = before + "\n" + bullet + "\n" + after_text.lstrip("\n")
-                elif related_header in text:
-                    idx2 = text.index(related_header)
-                    header_end = text.index("\n", idx2) + 1 if "\n" in text[idx2:] else len(text)
-                    next_heading = None
-                    for m in re.finditer(r"\n## ", text[header_end:]):
-                        next_heading = header_end + m.start()
-                        break
-                    insert_at = next_heading if next_heading is not None else len(text)
-                    before = text[:insert_at].rstrip()
-                    after_text = text[insert_at:]
-                    text = before + "\n" + bullet + "\n" + after_text.lstrip("\n")
-                else:
-                    if linked_header in text:
-                        idx2 = text.index(f"\n{linked_header}")
-                        text = text[:idx2].rstrip() + f"\n\n{auto_header}\n\n" + bullet + "\n" + text[idx2:]
-                    else:
-                        if not text.endswith("\n"):
-                            text += "\n"
-                        text += f"\n{auto_header}\n\n" + bullet + "\n"
-                fixed += 1
-            if text != original:
-                hub_path.write_text(text, encoding="utf-8")
-                hubs_touched.append(hub_rel)
-        if fixed:
-            self.rebuild_index()
-        lint_after = self.lint()
-        broken = lint_after.get("problems", {}).get("broken_links", [])
-        return {
-            "orphans_before": len(orphans),
-            "fixed": fixed,
-            "dry_run": False,
-            "hubs_touched": sorted(hubs_touched),
-            "plan": plan,
-            "hubs": {h: [e["orphan"] for e in v] for h, v in hub_groups.items()},
-            "lint_after": lint_after,
-            "broken_links_after": len(broken),
-        }
-
 
 def first_summary_line(body: str) -> str:
     """First meaningful non-heading line, truncated for the index bullet."""
