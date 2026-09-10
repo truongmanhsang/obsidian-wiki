@@ -1136,6 +1136,51 @@ class TestLLMGeneration:
         assert result["error"] == "llm_unavailable"
 
 
+class TestLLMHubLifecycle:
+    def test_first_write_generates_one_hub_when_no_hub_exists(self, provider, monkeypatch):
+        lint_module = importlib.import_module("obsidian_memory_core.wiki.lint")
+        calls = []
+
+        def fake_hub(context, run_llm=None):
+            calls.append(context)
+            return {
+                "path": "concepts/trading-hub.md",
+                "title": "Trading Hub",
+                "body": "# Trading Hub\n\nTrading topics.\n",
+                "keywords": ["trade", "mt5"],
+                "priority": 100,
+            }
+
+        monkeypatch.setattr(lint_module, "generate_hub_proposal", fake_hub)
+        _call(provider, action="write", page="entities/gold-mt5-bot",
+              content="# Gold MT5 Bot\n\nTrade automation.\n")
+        assert len(calls) == 1
+        hub = provider._get_vault().root / "concepts/trading-hub.md"
+        assert hub.exists()
+        assert "lint_hub: true" in hub.read_text(encoding="utf-8")
+
+    def test_matching_existing_hub_is_reused_without_llm(self, provider, monkeypatch):
+        lint_module = importlib.import_module("obsidian_memory_core.wiki.lint")
+        _call(
+            provider,
+            action="write",
+            page="concepts/trading-hub",
+            content=(
+                "---\n"
+                "lint_hub: true\n"
+                "lint_keywords: [trade]\n"
+                "---\n\n"
+                "# Trading Hub\n\nTrading topics.\n"
+            ),
+        )
+        calls = []
+        monkeypatch.setattr(lint_module, "generate_hub_proposal",
+                            lambda *args, **kwargs: calls.append(True))
+        _call(provider, action="write", page="entities/trade-bot",
+              content="# Trade Bot\n\nTrade system.\n")
+        assert calls == []
+
+
 class TestPrefetch:
     def test_trivial_query_returns_empty(self, provider):
         assert provider.prefetch("ok") == ""

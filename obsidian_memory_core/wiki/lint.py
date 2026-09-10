@@ -7,6 +7,7 @@ from .links import WIKILINK_RE, _alias_map, _out_links
 from .frontmatter import FRONTMATTER_RE
 from .normalize import _normalize
 from .frontmatter import _parse_aliases_list
+from .generation import generate_hub_proposal
 
 
 def _as_bool(value: object) -> bool:
@@ -45,6 +46,13 @@ def discover_hubs(vault) -> list[dict]:
     return sorted(hubs, key=lambda hub: (-hub["priority"], hub["path"].lower()))
 
 
+def _matching_hub(hubs: list[dict], haystack: str) -> str | None:
+    for hub in hubs:
+        if any(keyword in haystack for keyword in hub["keywords"]):
+            return hub["path"]
+    return None
+
+
 def _hub_for_orphan(vault, orphan_rel: str, title: str = "", ptype: str = "",
                     tags: list[str] | None = None, body: str = "") -> str:
     if not ptype:
@@ -54,9 +62,9 @@ def _hub_for_orphan(vault, orphan_rel: str, title: str = "", ptype: str = "",
         except Exception:
             ptype = ""
     haystack = " ".join([orphan_rel, title, ptype, " ".join(tags or []), body]).lower()
-    for hub in discover_hubs(vault):
-        if any(keyword in haystack for keyword in hub["keywords"]):
-            return hub["path"]
+    hub = _matching_hub(discover_hubs(vault), haystack)
+    if hub is not None:
+        return hub
 
     # Generic navigation fallback. LLM generation will replace this path when
     # no semantic hub exists and generation is available.
@@ -66,18 +74,31 @@ def lint(vault) -> dict:
     """Compatibility wrapper for WikiVault's canonical lint implementation."""
     return vault._lint_impl()
 
-def fix_orphans(vault, dry_run: bool = False) -> dict:
+def fix_orphans(vault, dry_run: bool = False, run_llm=None) -> dict:
     from .index import first_summary_line
     from .links import WIKILINK_RE
     lint_res = lint(vault)
     orphans = lint_res.get("problems", {}).get("orphans", []) or []
     if not orphans:
-        return {"orphans": 0, "fixed": 0, "dry_run": dry_run, "plan": [], "hubs": {}}
+        return {
+            "orphans": 0,
+            "fixed": 0,
+            "dry_run": dry_run,
+            "plan": [],
+            "hubs": {},
+            "generated_hubs": [],
+            "reused_hubs": [],
+            "generation_errors": [],
+        }
     pages = vault.load_pages()
     by_rel = {p["rel"]: p for p in pages}
+    hub_candidates = discover_hubs(vault)
     orphan_hub = "concepts/obsidian-wiki-index.md"
     hub_groups = {}
     plan = []
+    generated_hubs = []
+    reused_hubs = []
+    generation_errors = []
     for rel in sorted(orphans):
         if rel == orphan_hub:
             continue
@@ -89,8 +110,64 @@ def fix_orphans(vault, dry_run: bool = False) -> dict:
         tags = pg.get("meta", {}).get("tags", []) if pg else []
         if not isinstance(tags, list):
             tags = [str(tags)] if tags else []
-        hub = _hub_for_orphan(vault, rel, title=title, ptype=ptype,
-                              tags=tags, body=body)
+        haystack = " ".join([rel, title, ptype, " ".join(tags), body]).lower()
+        hub = _matching_hub(hub_candidates, haystack)
+        generated_hub = None
+        if hub is not None:
+            reused_hubs.append(hub)
+        else:
+            generated_hub = generate_hub_proposal(
+                {
+                    "pages": [{
+                        "path": rel,
+                        "title": title,
+                        "type": ptype,
+                        "tags": tags,
+                        "body": body,
+                    }],
+                    "existing_paths": sorted(by_rel),
+                    "existing_hubs": [
+                        {"path": item["path"], "keywords": item["keywords"]}
+                        for item in hub_candidates
+                    ],
+                },
+                run_llm=run_llm,
+            )
+            if generated_hub.get("error"):
+                generation_errors.append({"orphan": rel, "error": generated_hub["error"]})
+                hub = "concepts/obsidian-wiki-index.md"
+            else:
+                hub = generated_hub["path"]
+                if not dry_run:
+                    hub_path = vault.root / hub
+                    if hub_path.exists():
+                        generation_errors.append({"orphan": rel, "error": "duplicate_hub"})
+                        hub = "concepts/obsidian-wiki-index.md"
+                        generated_hub = None
+                    else:
+                        keywords_yaml = "[" + ", ".join(generated_hub["keywords"]) + "]"
+                        hub_content = (
+                            "---\n"
+                            "type: concept\n"
+                            "lint_hub: true\n"
+                            f"lint_keywords: {keywords_yaml}\n"
+                            f"lint_priority: {generated_hub['priority']}\n"
+                            "---\n\n"
+                            f"{generated_hub['body'].strip()}\n"
+                        )
+                        vault.write_page(
+                            hub,
+                            hub_content,
+                            note="LLM-generated navigation hub",
+                            allow_duplicate=True,
+                        )
+                        generated_hubs.append(hub)
+                if generated_hub is not None:
+                    hub_candidates.append({
+                        "path": hub,
+                        "keywords": generated_hub["keywords"],
+                        "priority": generated_hub["priority"],
+                    })
         if hub == rel:
             hub = "concepts/obsidian-wiki-index.md"
         if not (vault.root / hub).exists():
@@ -100,10 +177,21 @@ def fix_orphans(vault, dry_run: bool = False) -> dict:
             else:
                 continue
         entry = {"orphan": rel, "title": title, "summary": summary, "hub": hub}
+        if generated_hub is not None and not generated_hub.get("error"):
+            entry["generated_hub"] = generated_hub
         plan.append(entry)
         hub_groups.setdefault(hub, []).append(entry)
     if dry_run:
-        return {"orphans": len(orphans), "fixed": 0, "dry_run": True, "plan": plan, "hubs": {h: [e["orphan"] for e in v] for h, v in hub_groups.items()}}
+        return {
+            "orphans": len(orphans),
+            "fixed": 0,
+            "dry_run": True,
+            "plan": plan,
+            "hubs": {h: [e["orphan"] for e in v] for h, v in hub_groups.items()},
+            "generated_hubs": [],
+            "reused_hubs": sorted(set(reused_hubs)),
+            "generation_errors": generation_errors,
+        }
     fixed = 0
     hubs_touched = []
     for hub_rel, entries in hub_groups.items():
@@ -170,4 +258,16 @@ def fix_orphans(vault, dry_run: bool = False) -> dict:
         vault.rebuild_index()
     lint_after = lint(vault)
     broken = lint_after.get("problems", {}).get("broken_links", [])
-    return {"orphans_before": len(orphans), "fixed": fixed, "dry_run": False, "hubs_touched": sorted(hubs_touched), "plan": plan, "hubs": {h: [e["orphan"] for e in v] for h, v in hub_groups.items()}, "lint_after": lint_after, "broken_links_after": len(broken)}
+    return {
+        "orphans_before": len(orphans),
+        "fixed": fixed,
+        "dry_run": False,
+        "hubs_touched": sorted(hubs_touched),
+        "plan": plan,
+        "hubs": {h: [e["orphan"] for e in v] for h, v in hub_groups.items()},
+        "generated_hubs": sorted(set(generated_hubs)),
+        "reused_hubs": sorted(set(reused_hubs)),
+        "generation_errors": generation_errors,
+        "lint_after": lint_after,
+        "broken_links_after": len(broken),
+    }

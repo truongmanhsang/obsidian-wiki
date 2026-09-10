@@ -1139,7 +1139,10 @@ class WikiVault:
                     f"{page['rel']} (bad type '{page['ptype']}')"
                 )
             referrers = inbound[page["rel"]] - {f"index.md"}
-            if not referrers:
+            is_navigation_hub = str(page["meta"].get("lint_hub", "")).strip().lower() in {
+                "1", "true", "yes", "on"
+            }
+            if not referrers and not is_navigation_hub:
                 problems["orphans"].append(page["rel"])
             last_touch = log_dates.get(page["rel"], "")
             if (
@@ -1363,7 +1366,10 @@ class WikiVault:
         return resolve_hub(self, orphan_rel, title=title, ptype=ptype,
                           tags=tags, body=body)
 
-    def fix_orphans(self, dry_run: bool = False) -> dict:
+    def fix_orphans(self, dry_run: bool = False, run_llm=None) -> dict:
+        return _fix_orphans_fn(self, dry_run=dry_run, run_llm=run_llm)
+
+    def _legacy_fix_orphans(self, dry_run: bool = False) -> dict:
         """Auto-link every orphan by inserting a bullet into its hub parent."""
         lint = self.lint()
         orphans = lint.get("problems", {}).get("orphans", []) or []
