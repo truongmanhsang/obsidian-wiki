@@ -17,7 +17,7 @@ enforces wiki discipline automatically, so the agent cannot let the vault rot.
 |------|-----|
 | Index-first | prefetch() scores pages against each turn; system prompt carries a live catalog |
 | Optional reflection | prefetch() can call Hermes' configured LLM to synthesize relevant pages |
-| Stable navigation | the LLM generates missing hubs/indexes; existing hubs/indexes are reused |
+| Stable navigation | the LLM generates the root `index.md` only when missing; existing indexes are reused |
 | Typed pages | folder decides type: entities/, concepts/, sources/, answers/ |
 | Read-only sources | write_page rejects anything under sources/ |
 | No orphans | lint reports pages with zero inbound wikilinks |
@@ -30,30 +30,21 @@ enforces wiki discipline automatically, so the agent cannot let the vault rot.
 - list - stats + catalog
 - reflect - synthesize relevant wiki pages with Hermes' configured LLM
 - write - create/update page; frontmatter `type`/`updated` derived from
-  folder and stamped automatically; log updated in the same call, with
-  navigation generated only when missing
+  folder and stamped automatically; log updated in the same call, with the
+  root index generated only when missing
 - lint - orphans, broken links, missing frontmatter, stale claims; optional orphan auto-fix
 - log - recent operation tail
 
-### LLM-generated navigation
+### LLM-generated index
 
-Only semantic hub pages carry routing metadata:
-
-```yaml
----
-type: concept
-lint_hub: true
-lint_keywords: [trade, trading, freqtrade, mt5]
-lint_priority: 100
----
-```
-
-On the first meaningful write to a blank vault, the configured LLM generates a
-missing semantic hub and replaces the untouched skeleton index. In an
-established vault, existing hubs and `index.md` are reused. The LLM generates a
-new hub only when no existing hub matches an orphan, and generates an index only
-when the index is missing. If generation fails, the page write succeeds and the
+On the first meaningful write to a blank vault, the configured LLM may replace
+the untouched skeleton with a validated root `index.md`. In an established
+vault, an existing index is reused as-is. The LLM generates an index only when
+it is missing; if generation fails, the page write succeeds and the
 deterministic fallback is used.
+
+Explicit orphan fixes add validated navigation bullets to the root `index.md`.
+Normal page writes do not rewrite an existing index.
 
 Preview orphan fixes without changing the vault:
 
