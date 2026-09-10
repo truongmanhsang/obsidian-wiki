@@ -16,7 +16,6 @@ from obsidian_memory_core.wiki.links import WIKILINK_RE, TOKEN_RE, _alias_map, _
 from obsidian_memory_core.wiki.index import INDEX_HEADER, first_summary_line, _existing_summaries, rebuild_index as _rebuild_index_fn
 from obsidian_memory_core.wiki.log import LOG_HEADER, append_log as _append_log_fn, log_tail as _log_tail_fn, migrate_log_md_to_db, _ensure_db, _iter_log_rows  # noqa: F401
 from obsidian_memory_core.wiki.dedup import detect_duplicates as _detect_duplicates_fn
-from obsidian_memory_core.wiki.lint import lint as _lint_fn, _hub_for_orphan as _hub_fn, fix_orphans as _fix_orphans_fn
 from obsidian_memory_core.wiki.generation import generate_index_proposal
 from obsidian_memory_core.wiki.search import search as _search_fn, prefetch_context as _prefetch_fn
 
@@ -51,7 +50,7 @@ TOKEN_RE = TOKEN_RE
 
 # The overview is a stable entry point, not a backlink catalog. Its inbound
 # links are still counted by lint/search, but the generated section is kept on
-# the dedicated index hub so the overview remains readable.
+# the dedicated navigation index so the overview remains readable.
 # The overview itself should not accumulate a backlink catalog.
 BACKLINK_EXCLUDED_PAGES = {"concepts/obsidian-wiki-memory-system.md"}
 # Navigation pages are generated indexes, not semantic categories. They should
@@ -318,7 +317,7 @@ class WikiVault:
                     key, _, value = line.partition(":")
                     key = key.strip()
                     value = value.strip()
-                    if key in ("tags", "aliases", "lint_keywords"):
+                    if key in ("tags", "aliases"):
                         if value == "":
                             meta[key] = []
                             current_list_key = key
@@ -429,7 +428,6 @@ class WikiVault:
                 "type": page["ptype"],
                 "aliases": aliases if isinstance(aliases, list) else [str(aliases)],
                 "tags": tags if isinstance(tags, list) else [str(tags)],
-                "lint_hub": str(page["meta"].get("lint_hub", "")).lower() in {"1", "true", "yes", "on"},
                 "summary": first_summary_line(page["body"]),
             })
         return sorted(manifest, key=lambda page: page["path"].lower())
@@ -635,23 +633,6 @@ class WikiVault:
                 ("tags", tags_list),
                 ("aliases", aliases_list),
             ]
-            # Preserve optional hub-routing metadata supplied by the caller.
-            # These fields are intentionally outside the required frontmatter
-            # trio, but normal writes must not discard them.
-            if "lint_hub" in meta:
-                value = str(meta["lint_hub"]).strip().lower()
-                fm_pairs.append(("lint_hub", "true" if value in {"1", "true", "yes", "on"} else "false"))
-            if "lint_keywords" in meta:
-                keywords = meta["lint_keywords"]
-                if isinstance(keywords, str):
-                    raw = keywords.strip()
-                    if raw.startswith("[") and raw.endswith("]"):
-                        raw = raw[1:-1]
-                    keywords = [part.strip().strip("'\"") for part in raw.split(",") if part.strip()]
-                if isinstance(keywords, list):
-                    fm_pairs.append(("lint_keywords", [str(item).strip() for item in keywords if str(item).strip()]))
-            if "lint_priority" in meta and str(meta["lint_priority"]).strip():
-                fm_pairs.append(("lint_priority", str(meta["lint_priority"]).strip()))
             def _fmt(v):
                 return "[]" if not v else str(v)
             fm_lines = ["---"]
@@ -736,17 +717,6 @@ class WikiVault:
             note or f"{path.stem} ({ptype}); inbound links: {len(inbound)}",
             quiet=quiet_log,
         )
-        # auto-heal orphans (optional, idempotent, guarded against re-entry)
-        if not getattr(self, "_auto_heal_in_progress", False):
-            try:
-                self._auto_heal_in_progress = True
-                _lint_now = self.lint()
-                if _lint_now.get("problems", {}).get("orphans"):
-                    self.fix_orphans(dry_run=False)
-            except Exception:
-                pass
-            finally:
-                self._auto_heal_in_progress = False
         if ptype != "source":
             self.ensure_index_generated(was_blank=was_blank)
         return {
@@ -1141,6 +1111,11 @@ class WikiVault:
                 if hit != page["rel"]:
                     inbound[hit].add(page["rel"])
 
+        # The root index is generated navigation, but its valid links still
+        # count as inbound edges when deciding whether a page is orphaned.
+        from obsidian_memory_core.wiki.lint import _index_inbound
+        _index_inbound(self, inbound, stems)
+
         # Build last-touch dates from the LOG, but ONLY from WRITE/UPDATE
         # rows that name the page explicitly. A page's "last touched" date must
         # come from an actual edit event, not from a stray mention in another
@@ -1194,11 +1169,8 @@ class WikiVault:
                 problems["missing_frontmatter"].append(
                     f"{page['rel']} (bad type '{page['ptype']}')"
                 )
-            referrers = inbound[page["rel"]] - {f"index.md"}
-            is_navigation_hub = str(page["meta"].get("lint_hub", "")).strip().lower() in {
-                "1", "true", "yes", "on"
-            }
-            if not referrers and not is_navigation_hub:
+            referrers = inbound[page["rel"]]
+            if not referrers:
                 problems["orphans"].append(page["rel"])
             last_touch = log_dates.get(page["rel"], "")
             if (
@@ -1415,17 +1387,9 @@ class WikiVault:
     # Auto-orphan linker (feature #3)
     # ------------------------------------------------------------------
 
-    def _hub_for_orphan(self, orphan_rel: str, title: str = "", ptype: str = "",
-                        tags: list[str] | None = None,
-                        aliases: list[str] | None = None,
-                        body: str = "") -> str:
-        """Choose the best existing semantic category for an orphan page."""
-        from .lint import _hub_for_orphan as resolve_hub
-        return resolve_hub(self, orphan_rel, title=title, ptype=ptype,
-                          tags=tags, aliases=aliases, body=body)
-
-    def fix_orphans(self, dry_run: bool = False, run_llm=None) -> dict:
-        return _fix_orphans_fn(self, dry_run=dry_run, run_llm=run_llm)
+    def fix_orphans(self, dry_run: bool = False) -> dict:
+        from .lint import fix_orphans
+        return fix_orphans(self, dry_run=dry_run)
 
 def first_summary_line(body: str) -> str:
     """First meaningful non-heading line, truncated for the index bullet."""

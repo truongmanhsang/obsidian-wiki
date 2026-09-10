@@ -36,7 +36,7 @@ def parse_frontmatter(text: str):
                 key, _, value = line.partition(":")
                 key = key.strip()
                 value = value.strip()
-                if key in ("tags", "aliases", "lint_keywords"):
+                if key in ("tags", "aliases"):
                     if value == "":
                         meta[key] = []
                         current_list_key = key

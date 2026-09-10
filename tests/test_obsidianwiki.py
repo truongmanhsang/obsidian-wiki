@@ -915,134 +915,68 @@ class TestReadSearch:
 
 
 class TestLint:
-    def test_write_preserves_dynamic_hub_metadata(self, provider):
+    def _write_without_auto_heal(self, provider, page, content):
+        vault = provider._get_vault()
+        vault._auto_heal_in_progress = True
+        try:
+            return _call(provider, action="write", page=page, content=content)
+        finally:
+            vault._auto_heal_in_progress = False
+
+    def test_orphan_fix_dry_run_targets_root_index(self, provider):
+        self._write_without_auto_heal(
+            provider,
+            "entities/seed-page",
+            "# Seed Page\n\nExisting content.\n",
+        )
+        self._write_without_auto_heal(
+            provider,
+            "entities/orphan-page",
+            "# Orphan Page\n\nStandalone content.\n",
+        )
+        vault = provider._get_vault()
+        before = vault.index_path.read_text(encoding="utf-8")
+        result = vault.fix_orphans(dry_run=True)
+        assert result["dry_run"] is True
+        assert result["plan"][0]["index"] == "index.md"
+        assert vault.index_path.read_text(encoding="utf-8") == before
+
+    def test_orphan_fix_updates_root_index_and_is_idempotent(self, provider):
+        self._write_without_auto_heal(
+            provider,
+            "entities/seed-page",
+            "# Seed Page\n\nExisting content.\n",
+        )
+        self._write_without_auto_heal(
+            provider,
+            "entities/orphan-page",
+            "# Orphan Page\n\nStandalone content.\n",
+        )
+        vault = provider._get_vault()
+        first = vault.fix_orphans(dry_run=False)
+        assert first["fixed"] == 1
+        assert "[[entities/orphan-page|Orphan Page]]" in vault.index_path.read_text()
+        second = vault.fix_orphans(dry_run=False)
+        assert second["fixed"] == 0
+
+    def test_write_drops_removed_hub_metadata(self, provider):
         result = _call(
             provider,
             action="write",
-            page="concepts/markets-hub",
+            page="concepts/former-hub",
             content=(
                 "---\n"
                 "lint_hub: true\n"
-                "lint_keywords: [asset, market]\n"
-                "lint_priority: 25\n"
+                "lint_keywords: [old-topic]\n"
+                "lint_priority: 10\n"
                 "---\n\n"
-                "# Markets Hub\n\nAsset topics.\n"
+                "# Former Hub\n\nOrdinary concept content.\n"
             ),
         )
         text = Path(result["path"]).read_text(encoding="utf-8")
-        assert "lint_hub: true" in text
-        assert "lint_keywords:" in text
-        assert "lint_priority: 25" in text
-
-    def test_orphan_fix_discovers_hub_from_frontmatter(self, provider):
-        _call(
-            provider,
-            action="write",
-            page="concepts/markets-hub",
-            content=(
-                "---\n"
-                "lint_hub: true\n"
-                "lint_keywords: [asset, market]\n"
-                "lint_priority: 100\n"
-                "---\n\n"
-                "# Markets Hub\n\nAsset topics.\n"
-            ),
-        )
-        hub = provider._get_vault()._hub_for_orphan(
-            "entities/asset-bot.md",
-            title="Asset Bot",
-            ptype="entity",
-            body="Market automation",
-        )
-        assert hub == "concepts/markets-hub.md"
-
-    def test_non_hub_page_keywords_are_ignored(self, provider):
-        _call(
-            provider,
-            action="write",
-            page="concepts/market-notes",
-            content=(
-                "---\n"
-                "lint_keywords: [asset]\n"
-                "---\n\n"
-                "# Market Notes\n\nNotes.\n"
-            ),
-        )
-        _call(provider, action="write", page="concepts/obsidian-wiki-index",
-              content="# Obsidian Wiki Index\n\nNavigation.\n")
-        assert provider._get_vault()._hub_for_orphan(
-            "entities/asset-bot.md", title="Asset Bot", body="asset"
-        ) == "concepts/obsidian-wiki-index.md"
-
-    def test_hub_matching_includes_page_aliases(self, provider):
-        _call(
-            provider,
-            action="write",
-            page="concepts/commodities-hub",
-            content=(
-                "---\n"
-                "lint_hub: true\n"
-                "lint_keywords: [commodities]\n"
-                "---\n\n"
-                "# Commodities Hub\n\nCommodity topics.\n"
-            ),
-        )
-        assert provider._get_vault()._hub_for_orphan(
-            "entities/xauusd-bot.md",
-            title="Gold Bot",
-            ptype="entity",
-            aliases=["Commodities"],
-        ) == "concepts/commodities-hub.md"
-
-    def test_hub_priority_wins_and_path_breaks_ties(self, provider):
-        for page, priority in (
-            ("concepts/z-asset-hub", 10),
-            ("concepts/a-asset-hub", 10),
-            ("concepts/high-asset-hub", 20),
-        ):
-            _call(
-                provider,
-                action="write",
-                page=page,
-                allow_duplicate=True,
-                content=(
-                    "---\n"
-                    "lint_hub: true\n"
-                    "lint_keywords: [asset]\n"
-                    f"lint_priority: {priority}\n"
-                    "---\n\n# Hub\n"
-                ),
-            )
-        assert provider._get_vault()._hub_for_orphan(
-            "entities/asset-bot.md", title="Asset Bot", body="asset"
-        ) == "concepts/high-asset-hub.md"
-
-    def test_orphan_fix_uses_semantic_category_before_generic_index(self, provider):
-        _call(provider, action="write", page="concepts/obsidian-wiki-index",
-              content="# Obsidian Wiki Index\n\nNavigation.\n")
-        _call(provider, action="write", page="concepts/vietnam-safe-investment-channels",
-              content=(
-                  "---\n"
-                  "lint_hub: true\n"
-                  "lint_keywords: [business, investment]\n"
-                  "lint_priority: 100\n"
-                  "---\n\n"
-                  "# Vietnam Safe Investment Channels\n\nInvestment categories.\n"
-              ))
-        hub = provider._get_vault()._hub_for_orphan(
-            "answers/business-investment-comparison.md",
-            title="Business and Investment Comparison",
-            ptype="answer",
-            tags=["business", "investment"],
-        )
-        assert hub == "concepts/vietnam-safe-investment-channels.md"
-
-    def test_orphan_fix_falls_back_to_index_when_no_category_matches(self, provider):
-        _call(provider, action="write", page="concepts/obsidian-wiki-index",
-              content="# Obsidian Wiki Index\n\nNavigation.\n")
-        assert provider._get_vault()._hub_for_orphan(
-            "entities/memcheck.md", ptype="entity"
-        ) == "concepts/obsidian-wiki-index.md"
+        assert "lint_hub" not in text
+        assert "lint_keywords" not in text
+        assert "lint_priority" not in text
 
     def test_orphan_and_broken_link_detected(self, provider):
         # lone page with a link to nowhere
@@ -1134,20 +1068,15 @@ class TestLint:
 
 
 class TestLLMGeneration:
-    def test_hub_proposal_rejects_unsafe_path(self):
-        from obsidian_memory_core.wiki.generation import generate_hub_proposal
+    def test_generation_module_exports_only_index_proposal(self):
+        import obsidian_memory_core.wiki.generation as generation
 
-        proposal = generate_hub_proposal(
-            {"pages": [{"path": "entities/gold-bot.md", "title": "Gold Bot"}]},
-            run_llm=lambda _: {
-                "path": "../../secrets.md",
-                "title": "Bad",
-                "body": "# Bad\n",
-                "keywords": ["gold"],
-                "priority": 10,
-            },
-        )
-        assert proposal["error"] == "invalid_path"
+        assert not hasattr(generation, "generate_hub_proposal")
+        assert hasattr(generation, "generate_index_proposal")
+
+    def test_index_manifest_has_no_hub_metadata(self, provider):
+        manifest = provider._get_vault()._index_manifest()
+        assert all("lint_hub" not in page for page in manifest)
 
     def test_index_proposal_rejects_unknown_wikilink(self):
         from obsidian_memory_core.wiki.generation import generate_index_proposal
@@ -1188,78 +1117,20 @@ class TestLLMGeneration:
         assert result["error"] == "duplicate_link"
 
     def test_llm_exception_returns_stable_error(self):
-        from obsidian_memory_core.wiki.generation import generate_hub_proposal
+        from obsidian_memory_core.wiki.generation import generate_index_proposal
 
         def fail(_):
             raise TimeoutError("model unavailable")
 
-        result = generate_hub_proposal({}, run_llm=fail)
+        result = generate_index_proposal([], run_llm=fail)
         assert result["error"] == "llm_unavailable"
-
-
-class TestLLMHubLifecycle:
-    def test_first_write_generates_one_hub_when_no_hub_exists(self, provider, monkeypatch):
-        lint_module = importlib.import_module("obsidian_memory_core.wiki.lint")
-        calls = []
-
-        def fake_hub(context, run_llm=None):
-            calls.append(context)
-            return {
-                "path": "concepts/trading-hub.md",
-                "title": "Trading Hub",
-                "body": "# Trading Hub\n\nTrading topics.\n",
-                "keywords": ["trade", "mt5"],
-                "priority": 100,
-            }
-
-        monkeypatch.setattr(lint_module, "generate_hub_proposal", fake_hub)
-        _call(provider, action="write", page="entities/gold-mt5-bot",
-              content="# Gold MT5 Bot\n\nTrade automation.\n")
-        assert len(calls) == 1
-        hub = provider._get_vault().root / "concepts/trading-hub.md"
-        assert hub.exists()
-        assert "lint_hub: true" in hub.read_text(encoding="utf-8")
-
-    def test_matching_existing_hub_is_reused_without_llm(self, provider, monkeypatch):
-        lint_module = importlib.import_module("obsidian_memory_core.wiki.lint")
-        _call(
-            provider,
-            action="write",
-            page="concepts/trading-hub",
-            content=(
-                "---\n"
-                "lint_hub: true\n"
-                "lint_keywords: [trade]\n"
-                "---\n\n"
-                "# Trading Hub\n\nTrading topics.\n"
-            ),
-        )
-        calls = []
-        monkeypatch.setattr(lint_module, "generate_hub_proposal",
-                            lambda *args, **kwargs: calls.append(True))
-        _call(provider, action="write", page="entities/trade-bot",
-              content="# Trade Bot\n\nTrade system.\n")
-        assert calls == []
 
 
 class TestLLMIndexLifecycle:
     def test_blank_first_write_replaces_skeleton_index_with_llm_index(
         self, provider, monkeypatch
     ):
-        lint_module = importlib.import_module("obsidian_memory_core.wiki.lint")
         vault = provider._get_vault()
-
-        monkeypatch.setattr(
-            lint_module,
-            "generate_hub_proposal",
-            lambda *args, **kwargs: {
-                "path": "concepts/page-hub.md",
-                "title": "Page Hub",
-                "body": "# Page Hub\n\nPage topics.\n",
-                "keywords": ["page"],
-                "priority": 10,
-            },
-        )
         generated = []
 
         def fake_index(manifest, run_llm=None):
@@ -1292,19 +1163,7 @@ class TestLLMIndexLifecycle:
         assert generated
 
     def test_existing_index_is_reused_after_new_page(self, provider, monkeypatch):
-        lint_module = importlib.import_module("obsidian_memory_core.wiki.lint")
         vault = provider._get_vault()
-        monkeypatch.setattr(
-            lint_module,
-            "generate_hub_proposal",
-            lambda *args, **kwargs: {
-                "path": "concepts/page-hub.md",
-                "title": "Page Hub",
-                "body": "# Page Hub\n\nPage topics.\n",
-                "keywords": ["page"],
-                "priority": 10,
-            },
-        )
         calls = []
 
         def fake_index(manifest, run_llm=None):
@@ -1340,19 +1199,7 @@ class TestLLMIndexLifecycle:
         assert index_path.read_text(encoding="utf-8") == original
 
     def test_missing_index_in_established_vault_is_generated(self, provider, monkeypatch):
-        lint_module = importlib.import_module("obsidian_memory_core.wiki.lint")
         vault = provider._get_vault()
-        monkeypatch.setattr(
-            lint_module,
-            "generate_hub_proposal",
-            lambda *args, **kwargs: {
-                "path": "concepts/page-hub.md",
-                "title": "Page Hub",
-                "body": "# Page Hub\n\nPage topics.\n",
-                "keywords": ["page"],
-                "priority": 10,
-            },
-        )
         _call(provider, action="write", page="entities/first-page",
               content="# First Page\n\nFirst content.\n")
         vault.index_path.unlink()
@@ -1371,7 +1218,6 @@ class TestLLMIndexLifecycle:
                     "---\n\n"
                     "# Recreated LLM Index\n"
                     "- [[entities/first-page|First Page]]\n"
-                    "- [[concepts/page-hub|Page Hub]]\n"
                 )
             }
 

@@ -1,9 +1,8 @@
-"""LLM proposals for missing wiki navigation artifacts."""
+"""LLM proposals for the wiki's root navigation index."""
 from __future__ import annotations
 
 import json
 import re
-from pathlib import PurePosixPath
 from typing import Any, Callable
 
 import yaml
@@ -16,7 +15,7 @@ RunLLM = Callable[[str], object]
 
 
 def _default_run_llm(prompt: str) -> object:
-    """Use Hermes' configured one-shot runtime without importing it at module load."""
+    """Use Hermes' configured one-shot runtime without importing it at load time."""
     from agent.oneshot import run_oneshot
 
     return run_oneshot(
@@ -52,17 +51,6 @@ def _run(prompt: str, run_llm: RunLLM | None) -> dict[str, Any] | None:
         return None
 
 
-def _hub_prompt(context: dict[str, Any]) -> str:
-    return (
-        "Generate one missing Obsidian Wiki semantic hub. Return JSON only with "
-        "string fields path, title, body; an array keywords; and integer priority. "
-        "The path must be a new relative concepts/<slug>-hub.md path. Include a "
-        "minimal useful Markdown body, but do not invent facts beyond the supplied "
-        "page context. Mark the resulting page with lint_hub=true in its frontmatter.\n\n"
-        f"Context JSON:\n{json.dumps(context, ensure_ascii=False, sort_keys=True)}"
-    )
-
-
 def _index_prompt(manifest: list[dict[str, Any]]) -> str:
     return (
         "Generate an Obsidian Wiki index as JSON with one string field content. "
@@ -71,75 +59,6 @@ def _index_prompt(manifest: list[dict[str, Any]]) -> str:
         "page exactly once and do not invent paths or facts.\n\n"
         f"Manifest JSON:\n{json.dumps(manifest, ensure_ascii=False, sort_keys=True)}"
     )
-
-
-def _safe_hub_path(path: object, existing_paths: set[str]) -> str | None:
-    if not isinstance(path, str):
-        return None
-    normalized = path.strip().replace("\\", "/")
-    candidate = PurePosixPath(normalized)
-    if candidate.is_absolute() or any(part in {"", ".", ".."} for part in candidate.parts):
-        return None
-    if not re.fullmatch(r"concepts/[a-z0-9][a-z0-9_-]*\.md", normalized):
-        return None
-    if normalized in existing_paths:
-        return None
-    return normalized
-
-
-def _keywords(value: object) -> list[str]:
-    if isinstance(value, str):
-        text = value.strip()
-        if text.startswith("[") and text.endswith("]"):
-            text = text[1:-1]
-        value = text.split(",")
-    if not isinstance(value, list):
-        return []
-    result: list[str] = []
-    seen: set[str] = set()
-    for item in value:
-        keyword = str(item).strip().lower()
-        if keyword and keyword not in seen:
-            seen.add(keyword)
-            result.append(keyword)
-    return result
-
-
-def generate_hub_proposal(
-    context: dict[str, Any],
-    run_llm: RunLLM | None = None,
-) -> dict[str, Any]:
-    """Return a validated hub proposal or a stable error code."""
-    payload = _run(_hub_prompt(context), run_llm)
-    if payload is None:
-        return _error("llm_unavailable")
-    existing = {
-        str(path).strip().replace("\\", "/")
-        for path in context.get("existing_paths", [])
-    }
-    path = _safe_hub_path(payload.get("path"), existing)
-    if path is None:
-        return _error("invalid_path")
-    title = str(payload.get("title", "")).strip()
-    body = str(payload.get("body", "")).strip()
-    keywords = _keywords(payload.get("keywords"))
-    if not title:
-        return _error("invalid_title")
-    if not body:
-        return _error("invalid_body")
-    if not keywords:
-        return _error("invalid_keywords")
-    try:
-        priority = int(payload.get("priority", 0))
-    except (TypeError, ValueError):
-        return _error("invalid_priority")
-    return {
-        "path": path,
-        "title": title,
-        "body": body,
-        "keywords": keywords,
-        "priority": priority,
-    }
 
 
 def _canonical_link(link: str) -> str:
@@ -187,11 +106,11 @@ def generate_index_proposal(
     manifest: list[dict[str, Any]],
     run_llm: RunLLM | None = None,
 ) -> dict[str, Any]:
-    """Return a validated index proposal or a stable error code."""
+    """Return a validated root-index proposal or a stable error code."""
     payload = _run(_index_prompt(manifest), run_llm)
     if payload is None:
         return _error("llm_unavailable")
     return _validate_index(payload.get("content"), manifest)
 
 
-__all__ = ["generate_hub_proposal", "generate_index_proposal"]
+__all__ = ["generate_index_proposal"]

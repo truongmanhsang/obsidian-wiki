@@ -8,7 +8,7 @@ from .links import WIKILINK_RE, TOKEN_RE, _alias_map, _out_links, _inbound_links
 from .index import first_summary_line, _existing_summaries, rebuild_index
 from .log import append_log, log_tail
 from .dedup import detect_duplicates
-from .lint import lint, _hub_for_orphan, fix_orphans
+from .lint import lint, fix_orphans
 from .search import search, prefetch_context
 
 # For backward compat, also expose WikiVault.parse_frontmatter as staticmethod via vault class

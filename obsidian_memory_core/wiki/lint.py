@@ -1,285 +1,159 @@
-
-"""Lint and orphan-fixing helpers."""
+"""Lint and root-index orphan-fixing helpers."""
 from __future__ import annotations
+
 import re
 from pathlib import Path
-from .links import WIKILINK_RE, _alias_map, _out_links
-from .frontmatter import FRONTMATTER_RE
-from .normalize import _normalize
-from .frontmatter import _parse_aliases_list
-from .generation import generate_hub_proposal
+
+from .links import WIKILINK_RE
+from .intent import normalize_search
 
 
-def _as_bool(value: object) -> bool:
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+INDEX_REL = "index.md"
 
-
-def _as_list(value: object) -> list[str]:
-    if isinstance(value, list):
-        return [str(item).strip().lower() for item in value if str(item).strip()]
-    text = str(value or "").strip()
-    if text.startswith("[") and text.endswith("]"):
-        text = text[1:-1]
-    return [item.strip().strip("'\"").lower() for item in text.split(",") if item.strip()]
-
-
-def discover_hubs(vault) -> list[dict]:
-    """Return existing, valid hub pages ordered by priority and path."""
-    hubs = []
-    for page in vault.load_pages():
-        meta = page.get("meta", {})
-        if not _as_bool(meta.get("lint_hub")):
-            continue
-        keywords = _as_list(meta.get("lint_keywords"))
-        if not keywords or not page["path"].exists():
-            continue
-        try:
-            priority = int(str(meta.get("lint_priority", "0")).strip() or "0")
-        except ValueError:
-            priority = 0
-        hubs.append({
-            "path": page["rel"],
-            "keywords": keywords,
-            "priority": priority,
-            "page": page,
-        })
-    return sorted(hubs, key=lambda hub: (-hub["priority"], hub["path"].lower()))
-
-
-def _matching_hub(hubs: list[dict], haystack: str) -> str | None:
-    for hub in hubs:
-        if any(keyword in haystack for keyword in hub["keywords"]):
-            return hub["path"]
-    return None
-
-
-def _hub_for_orphan(vault, orphan_rel: str, title: str = "", ptype: str = "",
-                    tags: list[str] | None = None,
-                    aliases: list[str] | None = None,
-                    body: str = "") -> str:
-    if not ptype:
-        from .vault import DIR_TYPES
-        try:
-            ptype = DIR_TYPES.get(orphan_rel.split("/", 1)[0], "")
-        except Exception:
-            ptype = ""
-    haystack = " ".join([
-        orphan_rel,
-        title,
-        ptype,
-        " ".join(tags or []),
-        " ".join(aliases or []),
-        body,
-    ]).lower()
-    hub = _matching_hub(discover_hubs(vault), haystack)
-    if hub is not None:
-        return hub
-
-    # Generic navigation fallback. LLM generation will replace this path when
-    # no semantic hub exists and generation is available.
-    return "concepts/obsidian-wiki-index.md"
 
 def lint(vault) -> dict:
     """Compatibility wrapper for WikiVault's canonical lint implementation."""
     return vault._lint_impl()
 
-def fix_orphans(vault, dry_run: bool = False, run_llm=None) -> dict:
-    from .index import first_summary_line
-    from .links import WIKILINK_RE
+
+def _canonical_target(raw_link: str) -> str:
+    """Normalize a wikilink target for comparison with a vault-relative path."""
+    target = re.split(r"[|#]", raw_link.strip(), maxsplit=1)[0].strip()
+    target = target.replace("\\", "/").lstrip("./").lower()
+    if target.endswith(".md"):
+        target = target[:-3]
+    return target
+
+
+def _link_matches_page(raw_link: str, page_rel: str) -> bool:
+    target = _canonical_target(raw_link)
+    page = page_rel[:-3] if page_rel.lower().endswith(".md") else page_rel
+    page = page.replace("\\", "/").lower()
+    if "/" in target:
+        return target == page
+    return target == Path(page).stem.lower()
+
+
+def _navigation_links(text: str):
+    """Yield links that are actual navigation bullets, not quoted summaries."""
+    for line in text.splitlines():
+        if not re.match(r"^\s*(?:[-*+] |\d+[.)] )", line):
+            continue
+        links = WIKILINK_RE.findall(line)
+        if links:
+            yield links[0]
+
+
+def _index_inbound(vault, inbound: dict[str, set[str]], stems: dict[str, str]) -> None:
+    """Count valid root-index links as inbound navigation edges."""
+    try:
+        index_text = vault.index_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for raw_link in _navigation_links(index_text):
+        target = _canonical_target(raw_link)
+        hit = stems.get(normalize_search(target.split("/")[-1]))
+        if hit is None:
+            continue
+        if "/" in target:
+            want_dir = target.split("/", 1)[0]
+            have_dir = hit.split("/", 1)[0].lower()
+            if want_dir != have_dir:
+                continue
+        inbound[hit].add(INDEX_REL)
+
+
+def _insert_index_entries(text: str, entries: list[dict]) -> tuple[str, int]:
+    """Insert missing orphan bullets into a generated navigation section."""
+    missing: list[str] = []
+    for entry in entries:
+        if any(_link_matches_page(link, entry["orphan"]) for link in _navigation_links(text)):
+            continue
+        rel_no_md = entry["orphan"][:-3] if entry["orphan"].lower().endswith(".md") else entry["orphan"]
+        missing.append(f"- [[{rel_no_md}|{entry['title']}]] - {entry['summary']}")
+    if not missing:
+        return text, 0
+
+    section = "## Auto-linked"
+    bullets = "\n".join(missing)
+    if section in text:
+        start = text.index(section)
+        content_start = text.find("\n", start)
+        content_start = len(text) if content_start == -1 else content_start + 1
+        next_heading = re.search(r"\n## ", text[content_start:])
+        end = content_start + next_heading.start() if next_heading else len(text)
+        before = text[:end].rstrip()
+        after = text[end:].lstrip("\n")
+        separator = "\n" if after else ""
+        updated = f"{before}\n{bullets}\n{separator}{after}"
+    else:
+        updated = text.rstrip() + f"\n\n{section}\n\n{bullets}\n"
+    return updated, len(missing)
+
+
+def fix_orphans(vault, dry_run: bool = False) -> dict:
+    """Link orphan pages from the root ``index.md`` without LLM routing."""
     lint_res = lint(vault)
     orphans = lint_res.get("problems", {}).get("orphans", []) or []
-    if not orphans:
-        return {
-            "orphans": 0,
-            "fixed": 0,
-            "dry_run": dry_run,
-            "plan": [],
-            "hubs": {},
-            "generated_hubs": [],
-            "reused_hubs": [],
-            "generation_errors": [],
-        }
-    pages = vault.load_pages()
-    by_rel = {p["rel"]: p for p in pages}
-    hub_candidates = discover_hubs(vault)
-    orphan_hub = "concepts/obsidian-wiki-index.md"
-    hub_groups = {}
-    plan = []
-    generated_hubs = []
-    reused_hubs = []
-    generation_errors = []
-    for rel in sorted(orphans):
-        if rel == orphan_hub:
-            continue
-        pg = by_rel.get(rel, {})
-        title = pg.get("title") or Path(rel).stem
-        ptype = pg.get("ptype") or ""
-        body = pg.get("body") or ""
-        summary = first_summary_line(body) if body else "(auto-linked orphan)"
-        tags = pg.get("meta", {}).get("tags", []) if pg else []
-        if not isinstance(tags, list):
-            tags = [str(tags)] if tags else []
-        aliases = pg.get("meta", {}).get("aliases", []) if pg else []
-        if not isinstance(aliases, list):
-            aliases = [str(aliases)] if aliases else []
-        haystack = " ".join([
-            rel, title, ptype, " ".join(tags), " ".join(aliases), body
-        ]).lower()
-        hub = _matching_hub(hub_candidates, haystack)
-        generated_hub = None
-        if hub is not None:
-            reused_hubs.append(hub)
-        else:
-            generated_hub = generate_hub_proposal(
-                {
-                    "pages": [{
-                        "path": rel,
-                        "title": title,
-                        "type": ptype,
-                        "tags": tags,
-                        "body": body,
-                    }],
-                    "existing_paths": sorted(by_rel),
-                    "existing_hubs": [
-                        {"path": item["path"], "keywords": item["keywords"]}
-                        for item in hub_candidates
-                    ],
-                },
-                run_llm=run_llm,
-            )
-            if generated_hub.get("error"):
-                generation_errors.append({"orphan": rel, "error": generated_hub["error"]})
-                hub = "concepts/obsidian-wiki-index.md"
-            else:
-                hub = generated_hub["path"]
-                if not dry_run:
-                    hub_path = vault.root / hub
-                    if hub_path.exists():
-                        generation_errors.append({"orphan": rel, "error": "duplicate_hub"})
-                        hub = "concepts/obsidian-wiki-index.md"
-                        generated_hub = None
-                    else:
-                        keywords_yaml = "[" + ", ".join(generated_hub["keywords"]) + "]"
-                        hub_content = (
-                            "---\n"
-                            "type: concept\n"
-                            "lint_hub: true\n"
-                            f"lint_keywords: {keywords_yaml}\n"
-                            f"lint_priority: {generated_hub['priority']}\n"
-                            "---\n\n"
-                            f"{generated_hub['body'].strip()}\n"
-                        )
-                        vault.write_page(
-                            hub,
-                            hub_content,
-                            note="LLM-generated navigation hub",
-                            allow_duplicate=True,
-                        )
-                        generated_hubs.append(hub)
-                if generated_hub is not None:
-                    hub_candidates.append({
-                        "path": hub,
-                        "keywords": generated_hub["keywords"],
-                        "priority": generated_hub["priority"],
-                    })
-        if hub == rel:
-            hub = "concepts/obsidian-wiki-index.md"
-        if not (vault.root / hub).exists():
-            fallback = "concepts/obsidian-wiki-index.md"
-            if (vault.root / fallback).exists():
-                hub = fallback
-            else:
-                continue
-        entry = {"orphan": rel, "title": title, "summary": summary, "hub": hub}
-        if generated_hub is not None and not generated_hub.get("error"):
-            entry["generated_hub"] = generated_hub
-        plan.append(entry)
-        hub_groups.setdefault(hub, []).append(entry)
-    if dry_run:
-        return {
-            "orphans": len(orphans),
-            "fixed": 0,
-            "dry_run": True,
-            "plan": plan,
-            "hubs": {h: [e["orphan"] for e in v] for h, v in hub_groups.items()},
-            "generated_hubs": [],
-            "reused_hubs": sorted(set(reused_hubs)),
-            "generation_errors": generation_errors,
-        }
-    fixed = 0
-    hubs_touched = []
-    for hub_rel, entries in hub_groups.items():
-        hub_path = vault.root / hub_rel
-        try:
-            text = hub_path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        original = text
-        for entry in entries:
-            orphan_rel = entry["orphan"]
-            title = entry["title"]
-            summary = entry["summary"]
-            rel_no_md = orphan_rel[:-3] if orphan_rel.lower().endswith(".md") else orphan_rel
-            stem_lower = Path(orphan_rel).stem.lower()
-            already = False
-            for existing_link in WIKILINK_RE.findall(text):
-                es = existing_link.strip().split("/")[-1].strip()
-                es = re.sub(r"\.md$", "", es, flags=re.IGNORECASE).lower()
-                if es == stem_lower:
-                    already = True
-                    break
-            if already:
-                continue
-            bullet = f"- [[{rel_no_md}|{title}]] - {summary}"
-            auto_header = "## Auto-linked"
-            related_header = "## Related"
-            linked_header = "## Linked from"
-            if auto_header in text:
-                idx2 = text.index(auto_header)
-                header_end = text.index("\n", idx2) + 1 if "\n" in text[idx2:] else len(text)
-                next_heading = None
-                for m in re.finditer(r"\n## ", text[header_end:]):
-                    next_heading = header_end + m.start()
-                    break
-                insert_at = next_heading if next_heading is not None else len(text)
-                before = text[:insert_at].rstrip()
-                after_text = text[insert_at:]
-                text = before + "\n" + bullet + "\n" + after_text.lstrip("\n")
-            elif related_header in text:
-                idx2 = text.index(related_header)
-                header_end = text.index("\n", idx2) + 1 if "\n" in text[idx2:] else len(text)
-                next_heading = None
-                for m in re.finditer(r"\n## ", text[header_end:]):
-                    next_heading = header_end + m.start()
-                    break
-                insert_at = next_heading if next_heading is not None else len(text)
-                before = text[:insert_at].rstrip()
-                after_text = text[insert_at:]
-                text = before + "\n" + bullet + "\n" + after_text.lstrip("\n")
-            else:
-                if linked_header in text:
-                    idx2 = text.index(f"\n{linked_header}")
-                    text = text[:idx2].rstrip() + f"\n\n{auto_header}\n\n" + bullet + "\n" + text[idx2:]
-                else:
-                    if not text.endswith("\n"):
-                        text += "\n"
-                    text += f"\n{auto_header}\n\n" + bullet + "\n"
-            fixed += 1
-        if text != original:
-            hub_path.write_text(text, encoding="utf-8")
-            hubs_touched.append(hub_rel)
-    lint_after = lint(vault)
-    broken = lint_after.get("problems", {}).get("broken_links", [])
-    return {
-        "orphans_before": len(orphans),
-        "fixed": fixed,
-        "dry_run": False,
-        "hubs_touched": sorted(hubs_touched),
-        "plan": plan,
-        "hubs": {h: [e["orphan"] for e in v] for h, v in hub_groups.items()},
-        "generated_hubs": sorted(set(generated_hubs)),
-        "reused_hubs": sorted(set(reused_hubs)),
-        "generation_errors": generation_errors,
-        "lint_after": lint_after,
-        "broken_links_after": len(broken),
+    base = {
+        "orphans": len(orphans),
+        "fixed": 0,
+        "dry_run": dry_run,
+        "plan": [],
+        "index_updated": False,
     }
+    if not orphans:
+        base["lint_after"] = lint_res
+        base["broken_links_after"] = len(lint_res.get("problems", {}).get("broken_links", []))
+        return base
+
+    pages = {page["rel"]: page for page in vault.load_pages()}
+    plan = []
+    for rel in sorted(orphans):
+        page = pages.get(rel, {})
+        body = page.get("body", "")
+        plan.append({
+            "orphan": rel,
+            "title": page.get("title") or Path(rel).stem,
+            "summary": first_summary_line(body),
+            "index": INDEX_REL,
+        })
+    base["plan"] = plan
+    if dry_run:
+        return base
+
+    if not vault.index_path.exists():
+        vault.rebuild_index()
+    try:
+        original = vault.index_path.read_text(encoding="utf-8")
+    except OSError:
+        base["lint_after"] = lint(vault)
+        base["broken_links_after"] = len(base["lint_after"].get("problems", {}).get("broken_links", []))
+        return base
+    from .vault import _atomic_write_text
+
+    updated, fixed = _insert_index_entries(original, plan)
+    if fixed:
+        _atomic_write_text(vault.index_path, updated)
+        vault.append_log(
+            "LINT",
+            f"auto-linked {fixed} orphan page(s) to {INDEX_REL}",
+            quiet=True,
+        )
+        base["index_updated"] = True
+    base["fixed"] = fixed
+    base["lint_after"] = lint(vault)
+    base["broken_links_after"] = len(
+        base["lint_after"].get("problems", {}).get("broken_links", [])
+    )
+    return base
+
+
+def first_summary_line(body: str) -> str:
+    """Return a compact summary for generated index bullets."""
+    for line in body.splitlines():
+        value = line.strip()
+        if not value or value.startswith(("#", ">", "---", "!", "|")):
+            continue
+        return (value[:140] + "...") if len(value) > 140 else value
+    return "(empty page)"
