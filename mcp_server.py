@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import fastmcp
 from fastmcp import FastMCP
 
 from obsidian_memory_core import IngestJobManager, MemoryStore, RevisionConflict, MemoryWriteError
@@ -21,6 +22,11 @@ from obsidian_memory_core.config import vault_path
 
 
 mcp = FastMCP("obsidian-memory")
+# This server is used as a short-lived request/response memory adapter.  Keep
+# Streamable HTTP stateless so every client initialize/DELETE cycle cannot leave
+# a transport retained by the server's stateful session registry.  MCP SDK
+# 1.30.0 also removes stateful transports immediately after DELETE.
+fastmcp.settings.stateless_http = True
 _manager: IngestJobManager | None = None
 
 
