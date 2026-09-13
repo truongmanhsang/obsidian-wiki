@@ -44,10 +44,14 @@ from concurrent.futures import ThreadPoolExecutor
 
 try:
     from mcp import ClientSession
-    from mcp.client.streamable_http import streamablehttp_client
+    try:
+        # MCP SDK 2.x uses the PEP 8 name; older SDKs used the compact name.
+        from mcp.client.streamable_http import streamable_http_client
+    except ImportError:  # pragma: no cover - compatibility with older MCP SDKs
+        from mcp.client.streamable_http import streamablehttp_client as streamable_http_client
 except ImportError:  # pragma: no cover - direct mode remains usable
     ClientSession = None  # type: ignore
-    streamablehttp_client = None  # type: ignore
+    streamable_http_client = None  # type: ignore
 
 _MCP_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="obsidianwiki-mcp")
 _MCP_DEFAULT_URL = "http://127.0.0.1:8765/mcp"
@@ -81,9 +85,9 @@ def _mcp_error_detail(exc: Exception) -> str:
     return str(exc) or type(exc).__name__
 
 async def _call_mcp(url: str, tool_name: str, arguments: dict) -> dict:
-    if ClientSession is None or streamablehttp_client is None:
+    if ClientSession is None or streamable_http_client is None:
         raise RuntimeError("MCP Python SDK is not installed")
-    async with streamablehttp_client(url) as (read, write, _):
+    async with streamable_http_client(url) as (read, write, _):
         async with ClientSession(read, write) as client:
             await client.initialize()
             result = await client.call_tool(tool_name, arguments)
@@ -101,7 +105,18 @@ async def _call_mcp(url: str, tool_name: str, arguments: dict) -> dict:
             except json.JSONDecodeError:
                 return {"result": raw}
 
-from agent.memory_provider import MemoryProvider, RecallStatus
+try:
+    from agent.memory_provider import MemoryProvider, RecallStatus
+except ImportError:  # compatibility with Hermes releases before RecallStatus
+    from dataclasses import dataclass
+    from agent.memory_provider import MemoryProvider
+
+    @dataclass
+    class RecallStatus:
+        provider_label: str
+        count: int
+        glyph: str = ""
+
 from tools.registry import tool_error
 
 
