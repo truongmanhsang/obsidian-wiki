@@ -11,6 +11,10 @@ services:
       - OBSIDIAN_VAULT_PATH=/vault
       # Internal path for the job queue SQLite database
       - WIKI_JOB_DB=/data/jobs.db
+      # Reflection uses the existing Codex CLI OAuth session when selected.
+      - OBSIDIAN_MEMORY_REFLECT_PROVIDER=${OBSIDIAN_MEMORY_REFLECT_PROVIDER:-hermes}
+      - OBSIDIAN_MEMORY_REFLECT_MODEL=${OBSIDIAN_MEMORY_REFLECT_MODEL:-}
+      - CODEX_AUTH_PATH=/root/.codex/auth.json
     volumes:
       # Set OBSIDIAN_VAULT_HOST_PATH to the host vault before starting.
       - ${OBSIDIAN_VAULT_HOST_PATH:?Set OBSIDIAN_VAULT_HOST_PATH to the host vault}:/vault
@@ -18,6 +22,8 @@ services:
       - obsidian-memory-data:/data
       # Read Hermes session state for the centralized ingest worker.
       - ${HERMES_STATE_DB_HOST_PATH:?Set HERMES_STATE_DB_HOST_PATH to the host Hermes state database}:/root/.hermes/state.db:ro
+      # Read the existing Codex CLI login; Codex CLI owns token refreshes.
+      - ${CODEX_AUTH_HOST_PATH:?Set CODEX_AUTH_HOST_PATH to the Codex CLI auth file}:/root/.codex/auth.json:ro
     healthcheck:
       test:
         - CMD-SHELL

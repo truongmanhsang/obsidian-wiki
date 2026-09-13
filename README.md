@@ -16,7 +16,7 @@ enforces wiki discipline automatically, so the agent cannot let the vault rot.
 | Rule | How |
 |------|-----|
 | Index-first | prefetch() scores pages against each turn; system prompt carries a live catalog |
-| Optional reflection | prefetch() can call Hermes' configured LLM to synthesize relevant pages |
+| Optional reflection | prefetch() can call the configured Hermes or Codex provider to synthesize relevant pages |
 | Stable navigation | the LLM generates the root `index.md` only when missing; existing indexes are reused |
 | Typed pages | folder decides type: entities/, concepts/, sources/, answers/ |
 | Read-only sources | write_page rejects anything under sources/ |
@@ -28,7 +28,7 @@ enforces wiki discipline automatically, so the agent cannot let the vault rot.
 - read - full page content (+ similar-page suggestions on miss)
 - search - token-scored scan with snippets
 - list - stats + catalog
-- reflect - synthesize relevant wiki pages with Hermes' configured LLM
+- reflect - synthesize relevant wiki pages with the configured Hermes or Codex provider
 - write - create/update page; frontmatter `type`/`updated` derived from
   folder and stamped automatically; log updated in the same call, with the
   root index generated only when missing
@@ -80,12 +80,19 @@ turn:
 | `auto` | Use `recall` for ordinary lookups and `reflect` for synthesis-style queries such as comparisons, recommendations, “why”, “how”, summaries, and equivalent Vietnamese queries | Only when synthesis is detected |
 
 Reflection uses Hermes' configured provider/model through
-`agent.oneshot.run_oneshot()`; ObsidianWiki does not have a separate model or
-API key. It is a stateless auxiliary request containing the query and retrieved
+`agent.oneshot.run_oneshot()` by default. The standalone MCP server can instead
+use `OBSIDIAN_MEMORY_REFLECT_PROVIDER=codex`; that provider reads the existing
+Codex CLI session from `CODEX_AUTH_PATH` (normally `~/.codex/auth.json`) and
+calls the Codex Responses endpoint. The file is read-only and Codex CLI remains
+responsible for refreshing its session. Set
+`OBSIDIAN_MEMORY_REFLECT_MODEL` to the model accepted by the current Codex
+session. Additional providers can be added behind the same provider interface.
+
+Reflection is a stateless auxiliary request containing the query and retrieved
 wiki pages, not the full chat history. Set `prefetch_method: recall` to avoid
 automatic reflection, or `prefetch_method: reflect` to request it for every
 query that has matching pages. In MCP access mode, the native provider calls
-the central `memory_reflect` tool, which uses the same Hermes-configured LLM.
+the central `memory_reflect` tool.
 
 Vault discovery precedence is explicit and portable: Hermes plugin `vault_path`, then `OBSIDIAN_VAULT_PATH`, then `~/Documents/agent-vault`. The standalone MCP server does not read Hermes config; pass the same path via `OBSIDIAN_VAULT_PATH` or `--vault-path`.
 
@@ -441,7 +448,7 @@ can bypass the central job queue.
 
 #### Docker Compose setup
 
-For a persistent standalone server, use the provided Docker Compose configuration. This runs the memory server independently from Hermes (note that `memory_reflect` will not be available in standalone mode).
+For a persistent standalone server, use the provided Docker Compose configuration. This runs the memory server independently from Hermes. Reflection can use the existing Codex CLI login when `CODEX_AUTH_HOST_PATH`, `OBSIDIAN_MEMORY_REFLECT_PROVIDER`, and `OBSIDIAN_MEMORY_REFLECT_MODEL` are configured in `.env`.
 
 First, ensure Docker is installed. Then, from the `obsidianwiki` directory, start the server:
 
@@ -613,7 +620,9 @@ obsidian_memory_core
 The MCP adapter supports `memory_search`, `memory_read`, `memory_list`,
 `memory_reflect`, `memory_lint`, `memory_log`, `memory_write`,
 `memory_ingest_submit`, and `memory_ingest_status` (9 tools). Reflection uses
-Hermes' configured LLM through the shared `run_oneshot` runtime. Ingest jobs are serialized by one central
+the configured Hermes or Codex provider. Hermes-backed reflection uses the shared
+`run_oneshot` runtime; Codex-backed reflection reads the existing Codex CLI
+session described above. Ingest jobs are serialized by one central
 worker; writes use an exclusive lock and require an `expected_revision` SHA-256
 check when updating an existing page, rejecting stale updates from concurrent
 agents. Never store credentials, API keys,
@@ -782,7 +791,7 @@ possible.
 | `memory_search` | `query`, optional `limit` | Search durable wiki pages |
 | `memory_read` | `page` | Read a page and return its `revision` |
 | `memory_list` | optional `limit` | Return catalog, types, and statistics |
-| `memory_reflect` | `query`, optional `limit` | Synthesize relevant wiki pages with Hermes' configured LLM |
+| `memory_reflect` | `query`, optional `limit` | Synthesize relevant wiki pages with the configured Hermes or Codex provider |
 | `memory_lint` | optional `fix`, `dry_run` | Check wiki health; optionally preview/apply orphan fixes (`dry_run` defaults to true) |
 | `memory_log` | optional `limit` | Return recent operation logs |
 | `memory_write` | `page`, `content`, optional `note`, `expected_revision` | Create or safely update a page; use read-then-write for existing pages |

@@ -31,7 +31,14 @@ _manager: IngestJobManager | None = None
 
 
 def _run_reflection(query: str, pages: list[dict[str, Any]]) -> str:
-    """Synthesize retrieved curated pages with Hermes' configured LLM."""
+    """Synthesize retrieved curated pages with the configured provider."""
+    provider = os.environ.get("OBSIDIAN_MEMORY_REFLECT_PROVIDER", "hermes").strip().lower()
+    if provider in {"codex", "openai-codex"}:
+        from obsidian_memory_core.reflect import CodexProvider
+
+        return CodexProvider().reflect(query, pages)
+    if provider not in {"", "hermes"}:
+        raise RuntimeError(f"Unsupported reflection provider: {provider}")
     try:
         from agent.oneshot import run_oneshot
     except ImportError as exc:
