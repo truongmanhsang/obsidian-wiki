@@ -448,6 +448,114 @@ class WikiVault:
         }
 
     # ------------------------------------------------------------------
+    # Category navigation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _navigation_terms(page: dict) -> set[str]:
+        """Return generic terms used to match a page to a category index."""
+        values = [page.get("title", ""), page.get("stem", ""), page.get("body", "")]
+        for key in ("tags", "aliases"):
+            value = page.get("meta", {}).get(key, [])
+            values.extend(value if isinstance(value, list) else [value])
+        terms: set[str] = set()
+        for value in values:
+            terms.update(
+                token.casefold() for token in re.findall(r"[^\W_]{3,}", str(value), re.UNICODE)
+                if token.casefold() not in STOPWORDS
+            )
+        return terms
+
+    @staticmethod
+    def _is_category_index(page: dict) -> bool:
+        """Recognize category indexes without treating the root index as one."""
+        rel = str(page.get("rel", ""))
+        name = Path(rel).name.casefold()
+        meta = page.get("meta", {})
+        marker = meta.get("category_index", meta.get("index", False))
+        marked = str(marker).casefold() in {"1", "true", "yes", "on"}
+        return rel != "index.md" and (name.startswith("index-") or marked)
+
+    def _category_index_for(self, page: dict) -> dict | None:
+        """Choose the strongest existing category index for ``page``."""
+        page_terms = self._navigation_terms(page)
+        candidates = []
+        for candidate in self.load_pages():
+            if candidate["rel"] == page["rel"] or not self._is_category_index(candidate):
+                continue
+            if Path(candidate["rel"]).parts[0] != Path(page["rel"]).parts[0]:
+                continue
+            overlap = page_terms & self._navigation_terms(candidate)
+            if not overlap:
+                continue
+            # Prefer explicit tag/title matches over incidental body matches.
+            category_name = Path(candidate["rel"]).stem.removeprefix("index-")
+            category_terms = set(re.findall(r"[^\W_]{3,}", category_name.casefold(), re.UNICODE))
+            score = len(overlap) + (3 if page_terms & category_terms else 0)
+            candidates.append((score, candidate["rel"].casefold(), candidate))
+        return max(candidates, key=lambda item: (item[0], item[1]))[2] if candidates else None
+
+    def _new_category_index_path(self, page: dict) -> Path:
+        """Derive a safe category index path from page metadata, never root index.md."""
+        tags = page.get("meta", {}).get("tags", [])
+        tags = tags if isinstance(tags, list) else [tags]
+        raw = [str(tag) for tag in tags if str(tag).strip() and str(tag).casefold() != page.get("ptype", "").casefold()]
+        if not raw:
+            raw = re.findall(r"[^\W_]{3,}", str(page.get("title", "category")), re.UNICODE)[:2]
+        slug = "-".join(re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-") for value in raw)
+        slug = re.sub(r"-+", "-", slug).strip("-") or "category"
+        return self.root / Path(page["rel"]).parts[0] / f"index-{slug}.md"
+
+    def _link_category_index(self, page: dict) -> dict:
+        """Reuse or create one category index and add the page exactly once."""
+        # Explicit tags are the opt-in signal for creating a new category hub.
+        # Untagged legacy pages still participate when a matching hub already
+        # exists, but ordinary writes do not fill a vault with filename hubs.
+        if self._is_category_index(page):
+            return {"linked": False, "skipped": True}
+        matched = self._category_index_for(page)
+        target = matched["path"] if matched is not None else None
+        if target is None and not page.get("_category_navigation", False):
+            return {"linked": False, "skipped": True}
+        created = False
+        if target is None:
+            target = self._new_category_index_path(page)
+            if target.resolve() == self.index_path.resolve():
+                raise WikiVaultError("category index may not be the root index")
+            title = page.get("title") or Path(page["rel"]).stem
+            tags = page.get("meta", {}).get("tags", [])
+            tags = tags if isinstance(tags, list) else [tags]
+            tags = [str(tag).strip() for tag in tags if str(tag).strip()]
+            content = (
+                "---\n"
+                f"type: {page.get('ptype') or 'concept'}\n"
+                f"updated: {date.today().isoformat()}\n"
+                "category_index: true\n"
+                f"tags: [{', '.join(tags) or 'category'}]\n"
+                f"aliases: ['{title.replace(chr(39), chr(39) * 2)} Index']\n"
+                "---\n\n"
+                f"# {title} Index\n\n"
+                "Semantic navigation for related pages.\n\n"
+            )
+            _atomic_write_text(target, content)
+            created = True
+        raw = target.read_text(encoding="utf-8")
+        rel = page["rel"]
+        link = f"[[{rel}|{page.get('title') or Path(rel).stem}]]"
+        if link not in raw and f"[[{rel}|" not in raw and f"[[{rel.removesuffix('.md')}|" not in raw:
+            section = "## Pages"
+            if section in raw:
+                raw = raw.rstrip() + f"\n- {link}\n"
+            else:
+                raw = raw.rstrip() + f"\n\n{section}\n\n- {link}\n"
+            _atomic_write_text(target, raw)
+        return {"linked": True, "created": created, "index": str(target.relative_to(self.root))}
+
+    def _add_related_links(self, content: str, path: Path) -> str:
+        """Compatibility hook for callers that pre-process curated content."""
+        return content
+
+    # ------------------------------------------------------------------
     # Write path (page/navigation + log kept atomic-by-convention)
     # ------------------------------------------------------------------
 
@@ -488,6 +596,10 @@ class WikiVault:
         was_blank = self.is_blank_vault() if ptype != "source" else False
 
         meta, body = self.parse_frontmatter(content)
+        # Explicit tags opt a curated page into category navigation.  Untagged
+        # legacy pages keep the existing root-index/backlink behavior, while
+        # tagged pages reuse or create a matching category index.
+        category_navigation = bool(meta.get("tags"))
         fm_type = meta.get("type", "")
         if fm_type and fm_type != ptype:
             raise WikiVaultError(
@@ -698,6 +810,16 @@ class WikiVault:
             quiet=quiet_log,
         )
         if ptype != "source":
+            # Category navigation is best-effort: a malformed existing index,
+            # filesystem failure, or future matcher bug must not reject a page
+            # that was already persisted successfully.
+            try:
+                page = next((item for item in self.load_pages() if item["path"] == path), None)
+                if page is not None:
+                    page["_category_navigation"] = category_navigation
+                    self._link_category_index(page)
+            except Exception as exc:
+                logger.warning("category index maintenance failed for %s: %s", path, exc)
             self.ensure_index_generated(was_blank=was_blank)
         return {
             "status": "created" if is_new else "updated",

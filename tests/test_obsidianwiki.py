@@ -1232,6 +1232,65 @@ class TestLLMIndexLifecycle:
         assert "# Recreated LLM Index" in vault.index_path.read_text(encoding="utf-8")
 
 
+class TestCategoryNavigation:
+    @staticmethod
+    def _vault(tmp_path):
+        from obsidian_memory_core.wiki.vault import WikiVault
+        vault = WikiVault(str(tmp_path / "category-vault"))
+        vault.ensure_skeleton()
+        return vault
+
+    @staticmethod
+    def _page(title, tag):
+        return (
+            "---\n"
+            "type: concept\n"
+            f"tags: [{tag}]\n"
+            f"aliases: [{title}]\n"
+            "---\n\n"
+            f"# {title}\n\nA {tag} page.\n"
+        )
+
+    def test_reuses_matching_category_index(self, tmp_path):
+        vault = self._vault(tmp_path)
+        vault.write_page("concepts/index-finance", self._page("Finance", "finance"))
+        vault.write_page("concepts/budget", self._page("Budget", "finance"))
+        index = vault.root / "concepts/index-finance.md"
+        assert "[[concepts/budget.md|Budget]]" in index.read_text()
+        assert not (vault.root / "concepts/index-budget.md").exists()
+
+    def test_creates_missing_category_index(self, tmp_path):
+        vault = self._vault(tmp_path)
+        vault.write_page("concepts/compiler", self._page("Compiler", "infrastructure"))
+        index = vault.root / "concepts/index-infrastructure.md"
+        assert index.exists()
+        assert "[[concepts/compiler.md|Compiler]]" in index.read_text()
+
+    def test_category_index_failure_does_not_fail_page_write(self, tmp_path, monkeypatch):
+        vault = self._vault(tmp_path)
+        monkeypatch.setattr(vault, "_link_category_index", lambda _page: (_ for _ in ()).throw(OSError("boom")))
+        result = vault.write_page("concepts/resilient", self._page("Resilient", "reliability"))
+        assert result["status"] == "created"
+        assert (vault.root / "concepts/resilient.md").exists()
+
+    def test_root_index_is_not_used_as_category_index(self, tmp_path):
+        vault = self._vault(tmp_path)
+        vault.write_page("concepts/reliability", self._page("Reliability", "reliability"))
+        category = vault.root / "concepts/index-reliability.md"
+        assert category.exists()
+        assert "[[concepts/reliability.md|Reliability]]" in category.read_text()
+        assert category != vault.index_path
+        assert "[[concepts/index-reliability.md|Reliability Index]]" in vault.index_path.read_text()
+
+    def test_category_linking_is_idempotent(self, tmp_path):
+        vault = self._vault(tmp_path)
+        content = self._page("Stable", "operations")
+        vault.write_page("concepts/stable", content)
+        vault.write_page("concepts/stable", content)
+        index = vault.root / "concepts/index-operations.md"
+        assert index.read_text().count("[[concepts/stable.md|Stable]]") == 1
+
+
 def test_mcp_memory_lint_accepts_fix_and_dry_run(monkeypatch, tmp_path):
     import mcp_server
     from obsidian_memory_core.store import MemoryStore

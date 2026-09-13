@@ -4,7 +4,8 @@ services:
     container_name: obsidian-memory
     restart: unless-stopped
     ports:
-      - "8765:8765"
+      # Keep the local MCP endpoint off the network by default.
+      - "127.0.0.1:8765:8765"
     environment:
       # Internal mount path mapped to the vault below
       - OBSIDIAN_VAULT_PATH=/vault
@@ -15,6 +16,17 @@ services:
       - ${OBSIDIAN_VAULT_HOST_PATH:?Set OBSIDIAN_VAULT_HOST_PATH to the host vault}:/vault
       # Persist the job database outside the container
       - obsidian-memory-data:/data
+      # Read Hermes session state for the centralized ingest worker.
+      - ${HERMES_STATE_DB_HOST_PATH:?Set HERMES_STATE_DB_HOST_PATH to the host Hermes state database}:/root/.hermes/state.db:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import socket; socket.create_connection(('127.0.0.1', 8765), 2).close()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   obsidian-memory-data:

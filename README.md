@@ -453,9 +453,18 @@ Verify the service is running on port 8765:
 
 ```bash
 docker compose logs -f
+# or inspect the container health state
+docker compose ps
 ```
 
-The Docker container will map port `8765` and automatically start on system boot. Set `OBSIDIAN_VAULT_HOST_PATH` to the host vault path before running Compose; the container always mounts it at `/vault`.
+The Docker container binds port `8765` to localhost and automatically starts on
+system boot. Set `OBSIDIAN_VAULT_HOST_PATH` to the host vault path before
+running Compose; the container always mounts it at `/vault`. For example:
+
+```bash
+export OBSIDIAN_VAULT_HOST_PATH="$HOME/path/to/agent-vault"
+docker compose up -d --build
+```
 
 After the server is running, restart Hermes so it rediscovers the HTTP MCP server:
 
