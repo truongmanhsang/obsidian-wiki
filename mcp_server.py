@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fastmcp
 from fastmcp import FastMCP
 
-from obsidian_memory_core import IngestJobManager, MemoryStore, RevisionConflict, MemoryWriteError
+from obsidian_memory_core import IngestJobManager, InvalidRevisionFormat, MemoryStore, RevisionConflict, MemoryWriteError
 from obsidian_memory_core.config import vault_path
 
 
@@ -165,6 +165,10 @@ def memory_write(
         return _store(prepare=True).write(page, content, note, expected_revision, allow_duplicate)
     except RevisionConflict as exc:
         return {"error": "revision_conflict", "message": str(exc)}
+    except InvalidRevisionFormat as exc:
+        return {"error": "invalid_revision_format", "message": str(exc)}
+    except MemoryWriteError as exc:
+        return {"error": "write_failed", "message": str(exc)}
 
 
 @mcp.tool()
@@ -179,6 +183,8 @@ def memory_append(
         return _store(prepare=True).append(page, content, note, expected_revision)
     except RevisionConflict as exc:
         return {"error": "revision_conflict", "message": str(exc)}
+    except InvalidRevisionFormat as exc:
+        return {"error": "invalid_revision_format", "message": str(exc)}
     except MemoryWriteError as exc:
         return {"error": "append_failed", "message": str(exc)}
     except Exception as exc:
@@ -192,6 +198,8 @@ def memory_delete(page: str, expected_revision: str | None = None, note: str = "
         return _store(prepare=True).delete(page, expected_revision, note)
     except RevisionConflict as exc:
         return {"error": "revision_conflict", "message": str(exc)}
+    except InvalidRevisionFormat as exc:
+        return {"error": "invalid_revision_format", "message": str(exc)}
     except MemoryWriteError as exc:
         return {"error": "delete_failed", "message": str(exc)}
 

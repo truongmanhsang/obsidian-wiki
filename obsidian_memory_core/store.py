@@ -39,6 +39,7 @@ def _unlock_file(fh: Any) -> None:
     import fcntl
     fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
+_REVISION_PATTERN = re.compile(r"[0-9a-f]{64}")
 from .wiki import WikiVault, WikiVaultError
 
 
@@ -48,6 +49,10 @@ class MemoryWriteError(WikiVaultError):
 
 class RevisionConflict(MemoryWriteError):
     """Raised when an optimistic-concurrency revision is stale."""
+
+
+class InvalidRevisionFormat(MemoryWriteError):
+    """Raised when an expected revision is not a lowercase SHA-256 digest."""
 
 
 class MemoryStore:
@@ -75,6 +80,16 @@ class MemoryStore:
                 yield
             finally:
                 _unlock_file(fh)
+    @staticmethod
+    def _normalize_expected_revision(expected_revision: str | None) -> str | None:
+        """Normalize optional revisions and reject malformed SHA-256 values."""
+        if expected_revision in (None, ""):
+            return None
+        if not isinstance(expected_revision, str) or not _REVISION_PATTERN.fullmatch(expected_revision):
+            raise InvalidRevisionFormat(
+                "invalid expected_revision format; expected 64 lowercase hexadecimal characters"
+            )
+        return expected_revision
 
     def _page_path(self, page: str) -> Path:
         path = self.vault.safe_resolve(page)
@@ -150,7 +165,7 @@ class MemoryStore:
         # MCP clients may serialize an omitted optional string as "".
         # Treat that sentinel as no revision, which is valid for creation;
         # a real revision is always a non-empty SHA-256 string.
-        expected_revision = expected_revision or None
+        expected_revision = self._normalize_expected_revision(expected_revision)
         with self._write_lock():
             current = self._revision(page)
             if current is not None and expected_revision is None:
@@ -167,6 +182,7 @@ class MemoryStore:
             raise MemoryWriteError("delete requires a page")
         if page.split('/', 1)[0] == 'sources':
             raise MemoryWriteError('sources/ is read-only')
+        expected_revision = self._normalize_expected_revision(expected_revision)
         with self._write_lock():
             current = self._revision(page)
             if current is None:
@@ -187,7 +203,7 @@ class MemoryStore:
             raise MemoryWriteError("append requires non-empty content")
         if page.split('/', 1)[0] == 'sources':
             raise MemoryWriteError('sources/ is read-only')
-        expected_revision = expected_revision or None
+        expected_revision = self._normalize_expected_revision(expected_revision)
         with self._write_lock():
             current = self._revision(page)
             if current is None:

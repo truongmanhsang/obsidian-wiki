@@ -374,6 +374,35 @@ def test_empty_expected_revision_is_treated_as_create(tmp_path):
     assert created["status"] == "created"
 
 
+def test_malformed_expected_revision_is_rejected_for_all_mutations(tmp_path):
+    from obsidian_memory_core import MemoryStore, MemoryWriteError
+
+    store = MemoryStore(tmp_path / "vault")
+    store.ensure_ready()
+    created = store.write("concepts/revision-format", "# Revision Format\n\nOriginal content.\n")
+    revision = store.read("concepts/revision-format")["revision"]
+    malformed = revision[:-1]
+
+    with pytest.raises(MemoryWriteError, match="invalid expected_revision format"):
+        store.write(
+            "concepts/revision-format",
+            "# Revision Format\n\nChanged content.\n",
+            expected_revision=malformed,
+        )
+    with pytest.raises(MemoryWriteError, match="invalid expected_revision format"):
+        store.append(
+            "concepts/revision-format",
+            "## Appended\n\nShould not persist.\n",
+            expected_revision=malformed,
+        )
+    with pytest.raises(MemoryWriteError, match="invalid expected_revision format"):
+        store.delete("concepts/revision-format", expected_revision="g" * 64)
+
+    assert created["status"] == "created"
+    assert store.read("concepts/revision-format")["revision"] == revision
+    assert "Should not persist" not in store.read("concepts/revision-format")["content"]
+
+
 def test_shared_core_write_revision_and_lock(tmp_path):
     from obsidian_memory_core import MemoryStore
 
@@ -576,7 +605,7 @@ class TestWritePath:
         _call(provider, action="write", page="entities/protected-delete",
               content="# Protected Delete\n\nBody.\n")
         stale = _call(provider, action="delete", page="entities/protected-delete",
-                      expected_revision="stale")
+                      expected_revision="0" * 64)
         assert stale["error"] == "revision_conflict"
 
     def test_wrong_folder_type_conflicts(self, provider):

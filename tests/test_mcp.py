@@ -130,7 +130,7 @@ def test_hermes_provider_uses_shared_store_revision(tmp_path):
     })) ["revision"]
     assert created["status"] == "created"
     stale = json.loads(provider.handle_tool_call("obsidian_wiki", {
-        "action": "write", "page": "concepts/provider", "content": "# Stale\n\nNo overwrite.\n", "expected_revision": "stale"
+        "action": "write", "page": "concepts/provider", "content": "# Stale\n\nNo overwrite.\n", "expected_revision": "0" * 64
     }))
     assert stale["error"] == "revision_conflict"
     assert revision
