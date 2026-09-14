@@ -21,6 +21,17 @@ class TestPrefetch:
     def test_trivial_query_returns_empty(self, provider):
         assert provider.prefetch("ok") == ""
 
+    def test_always_mode_checks_short_query(self, provider, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            provider._get_vault(),
+            "prefetch_context",
+            lambda query, limit: calls.append((query, limit)) or "wiki context",
+        )
+        provider._config["prefetch_method"] = "always"
+        assert provider.prefetch("ok") == "wiki context"
+        assert calls == [("ok", 3)]
+
     def test_strong_match_injected(self, provider):
         _call(provider, action="write", page="entities/topic-beta-zz",
               content="# Topic Beta ZZ\n\ngeneric topic beta research notes\n")
@@ -68,6 +79,8 @@ class TestLifecycle:
         assert "Cat" in block
         assert "must never be edited with filesystem tools" in block
         assert "action=write" in block
+        assert "MANDATORY PRE-ACTION CHECK" in block
+        assert "action=search" in block
 
     def test_skeleton_created_on_demand(self, provider, tmp_path):
         v = provider._get_vault()

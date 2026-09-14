@@ -49,8 +49,11 @@ CONFIG_SCHEMA = ProviderConfigSchema(
             label="Prefetch method",
             kind=KIND_TEXT,
             default="recall",
-            description="Use recall, reflect, or auto reflection for synthesis queries.",
-            choices=("recall", "reflect", "auto"),
+            description=(
+                "Use always to check the wiki before every non-empty turn/action; "
+                "otherwise use recall, reflect, or auto reflection."
+            ),
+            choices=("always", "recall", "reflect", "auto"),
             inline=True,
         ),
         ProviderField(

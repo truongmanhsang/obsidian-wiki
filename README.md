@@ -66,7 +66,7 @@ plugins:
     vault_path: "/path/to/agent-vault"
     prefetch_limit: 3
     prefetch_min_query_chars: 10
-    prefetch_method: auto       # recall, reflect, or auto
+    prefetch_method: always     # always, recall, reflect, or auto
     inject_index_on_start: true
 ```
 
@@ -76,6 +76,7 @@ turn:
 | Mode | Behavior | LLM call |
 |------|----------|----------|
 | `recall` | Fast lexical/vector-assisted page recall with snippets | No |
+| `always` | Always check the wiki before any non-empty turn, including short queries | No |
 | `reflect` | Search relevant pages, read their full content, then synthesize an answer | Yes, for matching pages |
 | `auto` | Use `recall` for ordinary lookups and `reflect` for synthesis-style queries such as comparisons, recommendations, “why”, “how”, summaries, and equivalent Vietnamese queries | Only when synthesis is detected |
 

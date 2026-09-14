@@ -1143,6 +1143,34 @@ class TestCategoryNavigation:
         assert index.exists()
         assert "[[concepts/compiler.md|Compiler]]" in index.read_text()
 
+    def test_body_links_do_not_cross_classify_pages(self, tmp_path):
+        vault = self._vault(tmp_path)
+        vault.write_page("concepts/finance", self._page("Finance", "finance"))
+        vault.write_page("concepts/budget", self._page("Budget", "finance"))
+        vault.write_page(
+            "concepts/unrelated",
+            self._page("Unrelated", "operations")
+            + "See the finance page: [[concepts/finance.md|Finance]].\n",
+        )
+        index = vault.root / "concepts/index-finance.md"
+        text = index.read_text()
+        assert "[[concepts/budget.md|Budget]]" in text
+        assert "[[concepts/unrelated.md|Unrelated]]" not in text
+
+    def test_creates_recurring_tag_hub(self, tmp_path):
+        vault = self._vault(tmp_path)
+        for name, tag in [("alpha-one", "alpha"), ("alpha-two", "alpha"), ("other", "beta")]:
+            vault.write_page(f"concepts/{name}", self._page(name, tag))
+        result = vault.ensure_tag_category_indexes()
+        assert result["created_count"] == 1
+        hub = vault.root / "concepts/index-alpha.md"
+        assert hub.exists()
+        vault.rebuild_category_indexes()
+        text = hub.read_text()
+        assert "[[concepts/alpha-one.md|alpha-one]]" in text
+        assert "[[concepts/alpha-two.md|alpha-two]]" in text
+        assert "[[concepts/other.md|other]]" not in text
+
     def test_category_index_failure_does_not_fail_page_write(self, tmp_path, monkeypatch):
         vault = self._vault(tmp_path)
         monkeypatch.setattr(vault, "_link_category_index", lambda _page: (_ for _ in ()).throw(OSError("boom")))

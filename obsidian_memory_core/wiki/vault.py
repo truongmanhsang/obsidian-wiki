@@ -452,19 +452,16 @@ class WikiVault:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _navigation_terms(page: dict) -> set[str]:
-        """Return generic terms used to match a page to a category index."""
-        values = [page.get("title", ""), page.get("stem", ""), page.get("body", "")]
-        for key in ("tags", "aliases"):
-            value = page.get("meta", {}).get(key, [])
-            values.extend(value if isinstance(value, list) else [value])
-        terms: set[str] = set()
-        for value in values:
-            terms.update(
-                token.casefold() for token in re.findall(r"[^\W_]{3,}", str(value), re.UNICODE)
-                if token.casefold() not in STOPWORDS
-            )
-        return terms
+    def _navigation_tags(page: dict) -> set[str]:
+        """Return explicit tags used to classify a page into a category."""
+        value = page.get("meta", {}).get("tags", [])
+        values = value if isinstance(value, list) else [value]
+        page_type = str(page.get("ptype", "")).casefold()
+        return {
+            str(tag).strip().casefold()
+            for tag in values
+            if str(tag).strip() and str(tag).strip().casefold() != page_type
+        }
 
     @staticmethod
     def _is_category_index(page: dict) -> bool:
@@ -476,24 +473,134 @@ class WikiVault:
         marked = str(marker).casefold() in {"1", "true", "yes", "on"}
         return rel != "index.md" and (name.startswith("index-") or marked)
 
-    def _category_index_for(self, page: dict) -> dict | None:
-        """Choose the strongest existing category index for ``page``."""
-        page_terms = self._navigation_terms(page)
-        candidates = []
-        for candidate in self.load_pages():
+    def _category_index_for(self, page: dict, catalog: list[dict] | None = None) -> dict | None:
+        """Choose a category only from explicit tag/category metadata."""
+        page_tags = self._navigation_tags(page)
+        if not page_tags:
+            return None
+        matches = []
+        catalog = self.load_pages() if catalog is None else catalog
+        for candidate in catalog:
             if candidate["rel"] == page["rel"] or not self._is_category_index(candidate):
                 continue
             if Path(candidate["rel"]).parts[0] != Path(page["rel"]).parts[0]:
                 continue
-            overlap = page_terms & self._navigation_terms(candidate)
-            if not overlap:
+            candidate_tags = self._navigation_tags(candidate)
+            category_tag = str(candidate.get("meta", {}).get("category_tag", "")).strip().casefold()
+            if category_tag:
+                if category_tag not in page_tags:
+                    continue
+                score = 1000
+            else:
+                overlap = page_tags & candidate_tags
+                if len(overlap) < 2:
+                    continue
+                category_name = Path(candidate["rel"]).stem.removeprefix("index-")
+                category_terms = set(re.findall(r"[^\W_]{3,}", category_name.casefold(), re.UNICODE))
+                score = len(overlap) * 10 + len(page_tags & category_terms)
+            matches.append((score, candidate["rel"].casefold(), candidate))
+        return max(matches, key=lambda item: (item[0], item[1]))[2] if matches else None
+
+    def rebuild_category_indexes(self) -> dict:
+        """Remove stale category links and rebuild them from explicit tags."""
+        pages = self.load_pages()
+        indexes = [page for page in pages if self._is_category_index(page)]
+        links_by_index = {page["rel"]: [] for page in indexes}
+        for index in indexes:
+            index_folder = Path(index["rel"]).parts[0]
+            category_tag = str(index.get("meta", {}).get("category_tag", "")).strip().casefold()
+            index_tags = self._navigation_tags(index)
+            for page in pages:
+                if self._is_category_index(page) or Path(page["rel"]).parts[0] != index_folder:
+                    continue
+                page_tags = self._navigation_tags(page)
+                if category_tag:
+                    matches = category_tag in page_tags
+                else:
+                    matches = len(page_tags & index_tags) >= 2
+                if matches:
+                    links_by_index[index["rel"]].append(
+                        f"[[{page['rel']}|{page.get('title') or Path(page['rel']).stem}]]"
+                    )
+        changed = 0
+        counts = {}
+        for index in indexes:
+            path = self.root / index["rel"]
+            raw = path.read_text(encoding="utf-8")
+            base = raw.split("\n## Pages", 1)[0].rstrip()
+            links = sorted(set(links_by_index[index["rel"]]), key=str.casefold)
+            rebuilt = base
+            if links:
+                rebuilt += "\n\n## Pages\n\n" + "\n".join(f"- {link}" for link in links) + "\n"
+            if rebuilt != raw:
+                _atomic_write_text(path, rebuilt)
+                changed += 1
+            counts[index["rel"]] = len(links)
+        return {"changed": changed, "indexes": len(indexes), "counts": counts}
+
+    def ensure_tag_category_indexes(self, min_pages: int = 2) -> dict:
+        """Create exact-tag hubs for recurring curated-page tags."""
+        from collections import Counter
+
+        pages = self.load_pages()
+        groups: dict[tuple[str, str], int] = Counter()
+        for page in pages:
+            folder = Path(page["rel"]).parts[0]
+            if folder == "sources" or self._is_category_index(page):
                 continue
-            # Prefer explicit tag/title matches over incidental body matches.
-            category_name = Path(candidate["rel"]).stem.removeprefix("index-")
-            category_terms = set(re.findall(r"[^\W_]{3,}", category_name.casefold(), re.UNICODE))
-            score = len(overlap) + (3 if page_terms & category_terms else 0)
-            candidates.append((score, candidate["rel"].casefold(), candidate))
-        return max(candidates, key=lambda item: (item[0], item[1]))[2] if candidates else None
+            for tag in self._navigation_tags(page):
+                groups[(folder, tag)] += 1
+        created = []
+        skipped = []
+        for (folder, tag), count in sorted(groups.items()):
+            if count < min_pages:
+                continue
+            slug = re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", tag.casefold())).strip("-") or "category"
+            path = self.root / folder / f"index-{slug}.md"
+            title = tag.replace("-", " ").title()
+            qualified_title = f"{folder.title()} {title} Index"
+            if path.exists():
+                existing = next((p for p in pages if p["rel"] == path.relative_to(self.root).as_posix()), None)
+                existing_tag = str(existing.get("meta", {}).get("category_tag", "")).casefold() if existing else ""
+                if existing_tag == tag:
+                    raw = path.read_text(encoding="utf-8")
+                    qualified_title = f"{folder.title()} {title} Index"
+                    updated_raw = re.sub(
+                        r"(?m)^aliases:.*$",
+                        f"aliases: ['{qualified_title}']",
+                        raw,
+                        count=1,
+                    )
+                    if updated_raw != raw:
+                        _atomic_write_text(path, updated_raw)
+                    skipped.append(path.relative_to(self.root).as_posix())
+                elif existing and self._is_category_index(existing) and self._navigation_tags(existing) == {tag}:
+                    raw = path.read_text(encoding="utf-8")
+                    marker = "category_index: true\n"
+                    upgraded = raw.replace(
+                        marker,
+                        marker + "category_kind: tag\ncategory_tag: " + tag + "\n",
+                        1,
+                    )
+                    _atomic_write_text(path, upgraded)
+                    created.append(path.relative_to(self.root).as_posix())
+                continue
+            content = (
+                "---\n"
+                f"type: {DIR_TYPES[folder]}\n"
+                f"updated: {date.today().isoformat()}\n"
+                "category_index: true\n"
+                "category_kind: tag\n"
+                f"category_tag: {tag}\n"
+                f"tags: [{tag}]\n"
+                f"aliases: ['{qualified_title}']\n"
+                "---\n\n"
+                f"# {title} Index\n\n"
+                f"Pages tagged `{tag}`.\n"
+            )
+            _atomic_write_text(path, content)
+            created.append(path.relative_to(self.root).as_posix())
+        return {"created": created, "created_count": len(created), "skipped": skipped, "groups": len(groups)}
 
     def _new_category_index_path(self, page: dict) -> Path:
         """Derive a safe category index path from page metadata, never root index.md."""

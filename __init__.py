@@ -17,6 +17,7 @@ Config (config.yaml):
       vault_path: "/path/to/agent-vault"   # required
       prefetch_limit: 3                    # max wiki hits injected per turn
       prefetch_min_query_chars: 10         # skip trivial queries
+      prefetch_method: "always"           # always check the wiki before acting
       inject_index_on_start: true          # system prompt lists top pages
       access_mode: "mcp"                   # mcp (default) or direct
       mcp_url: "http://127.0.0.1:8765/mcp" # MCP server endpoint
@@ -174,6 +175,10 @@ WIKI_TOOL_SCHEMA = {
     "description": (
         "Direct wrapper for reading and writing the agent's long-term Obsidian wiki. "
         "WARNING: write replaces the entire page; use append to add content safely. "
+        "Before answering, planning, using another tool, or taking any action, "
+        "always call obsidian_wiki action=search first to check whether the wiki "
+        "already contains relevant knowledge; use the returned knowledge before "
+        "acting and call action=read for the matching page when full detail is needed. "
         "Always call this obsidian_wiki tool directly; do not use tool_search, "
         "tool_describe, tool_call, or the raw mcp__obsidian_wiki__* tools. The wiki is the "
         "source of truth for durable knowledge about entities (projects, "
@@ -444,6 +449,11 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                 "",
                 "The wiki is the source of truth for durable knowledge.",
                 "Follow these wiki rules:",
+                "- MANDATORY PRE-ACTION CHECK: before answering, planning, using "
+                "another tool, editing files, browsing, or taking any external "
+                "action, call obsidian_wiki action=search with a concise query. "
+                "Check whether the knowledge already exists; use it before acting, "
+                "and call action=read for the relevant page when details are needed.",
                 "- Read this catalog first; use action=search before answering "
                 "questions that may touch stored entities, people, decisions, "
                 "preferences, concepts, or lessons.",
@@ -514,8 +524,7 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
         return catalog
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
-        min_chars = int(self._config.get("prefetch_min_query_chars", 10))
-        if not isinstance(query, str) or len(query.strip()) < min_chars:
+        if not isinstance(query, str) or not query.strip():
             return ""
         try:
             vault = self._get_vault()
@@ -523,7 +532,11 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                 return ""
             limit = int(self._config.get("prefetch_limit", 3))
             method = str(self._config.get("prefetch_method", "recall")).lower()
-            if method not in {"recall", "reflect", "auto"}:
+            if method != "always":
+                min_chars = int(self._config.get("prefetch_min_query_chars", 10))
+                if len(query.strip()) < min_chars:
+                    return ""
+            if method not in {"recall", "reflect", "auto", "always"}:
                 method = "recall"
             should_reflect = method == "reflect" or (
                 method == "auto" and self._reflection_query(query)
