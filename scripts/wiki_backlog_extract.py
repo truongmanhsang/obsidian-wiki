@@ -82,7 +82,7 @@ def main() -> int:
     if st.get("started") is None:
         st["started"] = time.time()
 
-    pending = []
+    pending_by_group = {}
     for p in sorted(vault.root.rglob("sources/sessions/**/*.md")):
         meta, _ = vault.parse_frontmatter(p.read_text(encoding="utf-8"))
         rel = str(p.relative_to(vault.root))
@@ -91,21 +91,28 @@ def main() -> int:
         if p.stem.startswith("cron_"):
             continue
         if not meta.get("extracted") and rel not in st["done"]:
-            pending.append((p, rel))
+            # Capture splits oversized sessions into ``-part-NN`` pages.
+            # Extract all parts of one session in one LLM call instead of
+            # repeating the same session-level reasoning for every part.
+            group = re.sub(r"-part-\d+$", "", p.stem)
+            pending_by_group.setdefault(group, []).append((p, rel))
 
-    print(f"backlog: {len(pending)} sources to mine", flush=True)
+    pending = sorted(pending_by_group.values(), key=lambda group: str(group[0][0]))
+
+    print(f"backlog: {sum(len(group) for group in pending)} sources in {len(pending)} session groups to mine", flush=True)
     ok = fail = 0
-    for i, (p, rel) in enumerate(pending):
-        # skip tiny transcripts (<200 chars body = nothing to learn)
-        size = p.stat().st_size
-        if size < 400:
-            st["done"].append(rel)
-            store.update_ingest_status(rel, "skip")
+    for i, group in enumerate(pending):
+        group_name = re.sub(r"-part-\d+$", "", group[0][0].stem)
+        # Skip groups whose pages are all tiny transcripts.
+        if all(p.stat().st_size < 400 for p, _ in group):
+            for _, rel in group:
+                st["done"].append(rel)
+                store.update_ingest_status(rel, "skip")
             continue
-        rel_arg = str(p.relative_to(vault.root / "sources/sessions"))
+        rel_args = [str(p.relative_to(vault.root / "sources/sessions")) for p, _ in group]
         try:
             r = subprocess.run(
-                [HERMES_PY, SCRIPT, "--sessions", rel_arg, "--apply"],
+                [HERMES_PY, SCRIPT, "--apply", "--sessions", *rel_args],
                 capture_output=True, text=True, timeout=600,
             )
             if r.returncode == 0 and r.stdout.strip():
@@ -118,11 +125,12 @@ def main() -> int:
                     clean = health.get("clean")
                 except json.JSONDecodeError:
                     n_pages, clean, extract_status = 0, None, "fail"
-                store.update_ingest_status(rel, extract_status)
-                st["done"].append(rel)
-                ok += 1
+                for _, rel in group:
+                    store.update_ingest_status(rel, extract_status)
+                    st["done"].append(rel)
+                ok += len(group)
                 print(
-                    f"[{i+1}/{len(pending)}] {rel}: +{n_pages} pages "
+                    f"[{i+1}/{len(pending)}] {group_name} ({len(group)} source parts): +{n_pages} pages "
                     f"(lint_clean={clean})",
                     flush=True,
                 )
@@ -131,15 +139,18 @@ def main() -> int:
                     (r.stderr or r.stdout or "no output")[-160:]
                 )
         except Exception as e:  # noqa: BLE001
-            store.update_ingest_status(rel, "fail")
-            st["failed"].append({"rel": rel, "err": str(e)[:150]})
-            fail += 1
-            print(f"[{i+1}/{len(pending)}] FAILED {rel}: {str(e)[:100]}", flush=True)
+            for _, rel in group:
+                store.update_ingest_status(rel, "fail")
+                st["failed"].append({"rel": rel, "err": str(e)[:150]})
+            fail += len(group)
+            print(f"[{i+1}/{len(pending)}] FAILED {group_name}: {str(e)[:100]}", flush=True)
 
-        st["last"] = rel
+        st["last"] = group[-1][1]
         save_state(st)
         time.sleep(BATCH_DELAY)
 
+    # Keep root navigation and source-folder counts current after a bulk run.
+    vault.rebuild_index()
     print(f"backlog COMPLETE: {ok} mined, {fail} failed", flush=True)
     save_state(st)
     return 0

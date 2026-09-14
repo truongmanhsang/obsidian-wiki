@@ -789,9 +789,12 @@ class TestLint:
     def _write_without_auto_heal(self, provider, page, content):
         vault = provider._get_vault()
         vault._auto_heal_in_progress = True
+        original_rebuild = vault.rebuild_index
+        vault.rebuild_index = lambda: None
         try:
             return _call(provider, action="write", page=page, content=content)
         finally:
+            vault.rebuild_index = original_rebuild
             vault._auto_heal_in_progress = False
 
     def test_orphan_fix_dry_run_targets_root_index(self, provider):
@@ -825,7 +828,7 @@ class TestLint:
         )
         vault = provider._get_vault()
         first = vault.fix_orphans(dry_run=False)
-        assert first["fixed"] == 1
+        assert first["fixed"] == 2
         assert "[[entities/orphan-page|Orphan Page]]" in vault.index_path.read_text()
         second = vault.fix_orphans(dry_run=False)
         assert second["fixed"] == 0
@@ -1033,7 +1036,7 @@ class TestLLMIndexLifecycle:
         assert "# LLM Index" in index
         assert generated
 
-    def test_existing_index_is_reused_after_new_page(self, provider, monkeypatch):
+    def test_existing_index_is_refreshed_after_new_page(self, provider, monkeypatch):
         vault = provider._get_vault()
         calls = []
 
@@ -1065,9 +1068,12 @@ class TestLLMIndexLifecycle:
         index_path = provider._get_vault().root / "index.md"
         original = index_path.read_text(encoding="utf-8")
         _call(provider, action="write", page="entities/second-page",
-              content="# Second Page\n\nPage content.\n")
+              content="# Second Page\n\nSecond content.\n")
         assert len(calls) == 1
-        assert index_path.read_text(encoding="utf-8") == original
+        refreshed = index_path.read_text(encoding="utf-8")
+        assert refreshed != original
+        assert "[[entities/second-page.md|Second Page]]" in refreshed
+        assert "Pages: 3" in refreshed
 
     def test_missing_index_in_established_vault_is_generated(self, provider, monkeypatch):
         vault = provider._get_vault()

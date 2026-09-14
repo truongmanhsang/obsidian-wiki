@@ -34,6 +34,41 @@ from obsidian_memory_core.wiki import WikiVault  # noqa: E402
 from obsidian_memory_core import MemoryStore  # noqa: E402
 from obsidian_memory_core.config import vault_path  # noqa: E402
 
+# WikiVault rejects pages at 100000 chars; leave headroom for frontmatter.
+MAX_SOURCE_PAGE_CHARS = 95000
+
+
+def split_markdown(markdown: str, max_chars: int = MAX_SOURCE_PAGE_CHARS) -> list[str]:
+    """Split a transcript into bounded pages without losing turn boundaries."""
+    if len(markdown) <= max_chars:
+        return [markdown]
+    sections = re.split(
+        r"(?=^## (?:User|Assistant)(?: \([^\n]*\))?\s*$)",
+        markdown,
+        flags=re.MULTILINE,
+    )
+    header = sections[0]
+    turns = [section for section in sections[1:] if section.strip()]
+    if not turns:
+        return [markdown[index:index + max_chars] for index in range(0, len(markdown), max_chars)]
+    pages: list[str] = []
+    current = header
+    for turn in turns:
+        available = max_chars - len(header)
+        if len(turn) <= available and len(current) + len(turn) <= max_chars:
+            current += turn
+            continue
+        if current != header:
+            pages.append(current.rstrip() + "\n")
+            current = header
+        while len(turn) > available:
+            pages.append((header + turn[:available]).rstrip() + "\n")
+            turn = turn[available:]
+        current += turn
+    if current != header:
+        pages.append(current.rstrip() + "\n")
+    return pages
+
 
 def clean_content(text: str) -> str:
     """Strip gateway noise wrappers from message content."""
@@ -178,10 +213,14 @@ def main() -> int:
     def target_path(sid: str) -> Path:
         return vault.root / (dated_rel(sid) + ".md")
 
+    def captured_path_exists(sid: str) -> bool:
+        """Treat split ``-part-NN`` pages as an already captured session."""
+        target = target_path(sid)
+        return target.exists() or any(target.parent.glob(target.stem + "-part-*.md"))
+
     captured, skipped_small, skipped_exists = [], 0, 0
     for sid in sessions:
-        target = target_path(sid)
-        if target.exists() and not args.force:
+        if captured_path_exists(sid) and not args.force:
             skipped_exists += 1
             continue
         result = export_session(cur, sid)
@@ -194,13 +233,24 @@ def main() -> int:
         if dialogue_chars < args.min_chars:
             skipped_small += 1
             continue
-        store.write_ingest(
-            dated_rel(sid),
-            markdown,
-            note=f"captured {n_turns} turns from state.db",
-        )
-        store.update_ingest_status(dated_rel(sid), "pending")
-        captured.append((dated_rel(sid), n_turns, dialogue_chars))
+        base_rel = dated_rel(sid)
+        pages = split_markdown(markdown)
+        for part_index, page in enumerate(pages, 1):
+            rel = base_rel if len(pages) == 1 else f"{base_rel}-part-{part_index:02d}"
+            store.write_ingest(
+                rel,
+                page,
+                note=f"captured {n_turns} turns from state.db"
+                + (f" (part {part_index}/{len(pages)})" if len(pages) > 1 else ""),
+            )
+            store.update_ingest_status(rel, "pending")
+            captured.append((rel, n_turns, dialogue_chars))
+
+    if captured:
+        # Source pages are intentionally grouped in the root index. Refresh
+        # once per capture batch so source-only imports do not leave counts
+        # and date folders stale.
+        vault.rebuild_index()
 
     conn.close()
     print(json.dumps({

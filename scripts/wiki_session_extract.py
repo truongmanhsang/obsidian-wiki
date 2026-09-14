@@ -335,11 +335,16 @@ def main() -> int:
             # Jobs submit a session ID, while captured sources live below a
             # YYYY/MM/DD tree. Accept both a relative source path and a bare
             # session ID without falling back to unrelated newest sources.
-            if not candidate.is_file():
+            if candidate.is_file():
+                matches = [candidate]
+            else:
                 matches = list(sess_root.rglob(rel.name))
-                candidate = matches[0].resolve() if len(matches) == 1 else candidate
-            if candidate.is_file() and sess_root.resolve() in candidate.parents:
-                hits.append(candidate)
+                if not matches:
+                    matches = sorted(sess_root.rglob(f"{rel.stem}-part-*.md"))
+            for match in matches:
+                resolved = match.resolve()
+                if resolved.is_file() and sess_root.resolve() in resolved.parents:
+                    hits.append(resolved)
         src_paths = list(dict.fromkeys(hits))
     else:
         # newest un-extracted transcripts across the whole date tree

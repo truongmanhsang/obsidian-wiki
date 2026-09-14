@@ -593,6 +593,8 @@ class WikiVault:
             )
         if auto_quiet:
             quiet_log = ptype == "source"
+        index_existed = self.index_path.exists()
+        skeleton_index = bool(getattr(self, "_index_created_by_skeleton", False))
         was_blank = self.is_blank_vault() if ptype != "source" else False
 
         meta, body = self.parse_frontmatter(content)
@@ -821,6 +823,13 @@ class WikiVault:
             except Exception as exc:
                 logger.warning("category index maintenance failed for %s: %s", path, exc)
             self.ensure_index_generated(was_blank=was_blank)
+            # Existing indexes are valid bootstrap/navigation snapshots, but
+            # they must not remain stale after a curated page is created or
+            # updated. Keep the initial LLM-generated index; subsequent
+            # refreshes use the deterministic renderer and preserve summaries
+            # already present in the root index.
+            if index_existed and not was_blank and not skeleton_index:
+                self.rebuild_index()
         return {
             "status": "created" if is_new else "updated",
             "path": str(path),
@@ -1171,6 +1180,9 @@ class WikiVault:
         problems = {"orphans": [], "missing_frontmatter": [],
                     "broken_links": [], "stale_claims": []}
 
+        # Keep editorial inbound links separate from generated root-index
+        # navigation. The latter makes a page reachable for orphan detection,
+        # but must not inflate its content connectivity score.
         inbound: dict[str, set[str]] = {p["rel"]: set() for p in pages}
         for page in pages:
             # raw session transcripts quote wiki syntax from chat; they are
@@ -1208,6 +1220,7 @@ class WikiVault:
 
         # The root index is generated navigation, but its valid links still
         # count as inbound edges when deciding whether a page is orphaned.
+        content_inbound = {rel: set(refs) for rel, refs in inbound.items()}
         from obsidian_memory_core.wiki.lint import _index_inbound
         _index_inbound(self, inbound, stems)
 
@@ -1400,7 +1413,7 @@ class WikiVault:
                 for t in _out_links(stripped)
                 if t in stem_to_rel and stem_to_rel[t] != rel
             }
-            degree = len(inbound.get(rel, set())) + len(resolved_out)
+            degree = len(content_inbound.get(rel, set())) + len(resolved_out)
             if degree < 2:
                 weak.append(f"{rel} (degree {degree})")
         if weak:
