@@ -24,6 +24,23 @@ def test_mcp_exposes_read_and_write_tools():
     assert {"memory_search", "memory_reflect", "memory_read", "memory_write", "memory_append", "memory_ingest_submit", "memory_ingest_status"}.issubset(names)
 
 
+def test_mcp_memory_write_reports_invalid_revision_format(monkeypatch, tmp_path):
+    import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_SERVER_VAULT_PATH", str(tmp_path / "vault"))
+    mcp_server.memory_write("concepts/mcp-format", "# MCP Format\n\nBody.\n")
+    result = mcp_server.memory_write(
+        "concepts/mcp-format",
+        "# Must Not Persist\n",
+        expected_revision="0" * 63,
+    )
+
+    assert result == {
+        "error": "invalid_revision_format",
+        "message": "invalid expected_revision format; expected 64 lowercase hexadecimal characters",
+    }
+
+
 def test_mcp_reflect_tool_returns_grounded_sources(monkeypatch, tmp_path):
     import mcp_server
 
@@ -134,6 +151,22 @@ def test_hermes_provider_uses_shared_store_revision(tmp_path):
     }))
     assert stale["error"] == "revision_conflict"
     assert revision
+
+
+def test_hermes_provider_reports_invalid_revision_format(tmp_path):
+    mod = _load_module()
+    provider = mod.ObsidianWikiMemoryProvider({"vault_path": str(tmp_path / "vault"), "access_mode": "direct"})
+    provider.initialize(session_id="test")
+    _call(provider, action="write", page="concepts/provider-format", content="# Provider Format\n\nBody.\n")
+    result = json.loads(provider.handle_tool_call("obsidian_wiki", {
+        "action": "write",
+        "page": "concepts/provider-format",
+        "content": "# Must Not Persist\n",
+        "expected_revision": "0" * 63,
+    }))
+    assert result["error"] == "invalid expected_revision format; expected 64 lowercase hexadecimal characters"
+
+
 def test_mcp_memory_lint_accepts_fix_and_dry_run(monkeypatch, tmp_path):
     import mcp_server
     from obsidian_memory_core.store import MemoryStore
