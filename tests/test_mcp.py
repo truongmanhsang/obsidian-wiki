@@ -17,10 +17,31 @@ from tests.support import (
     _load_provider_for_tests,
 )
 
+
+def _tool_function(tool):
+    """Unwrap FastMCP FunctionTool while supporting older FastMCP releases."""
+    return getattr(tool, "fn", tool)
+
+
+def _registered_tool_names(server):
+    """Return registered tool names across supported FastMCP APIs."""
+    get_tools = getattr(server, "get_tools", None)
+    if get_tools is not None:
+        tools = asyncio.run(get_tools())
+    else:
+        manager = getattr(server, "_tool_manager", None)
+        manager_get_tools = getattr(manager, "get_tools", None)
+        if manager_get_tools is not None:
+            tools = asyncio.run(manager_get_tools())
+        else:
+            tools = getattr(manager, "_tools", {})
+    return set(tools)
+
+
 def test_mcp_exposes_read_and_write_tools():
     from mcp_server import mcp
 
-    names = set(asyncio.run(mcp.get_tools()))
+    names = _registered_tool_names(mcp)
     assert {"memory_search", "memory_reflect", "memory_read", "memory_write", "memory_append", "memory_ingest_submit", "memory_ingest_status"}.issubset(names)
 
 
@@ -28,8 +49,9 @@ def test_mcp_memory_write_reports_invalid_revision_format(monkeypatch, tmp_path)
     import mcp_server
 
     monkeypatch.setattr(mcp_server, "_SERVER_VAULT_PATH", str(tmp_path / "vault"))
-    mcp_server.memory_write.fn("concepts/mcp-format", "# MCP Format\n\nBody.\n")
-    result = mcp_server.memory_write.fn(
+    write = _tool_function(mcp_server.memory_write)
+    write("concepts/mcp-format", "# MCP Format\n\nBody.\n")
+    result = write(
         "concepts/mcp-format",
         "# Must Not Persist\n",
         expected_revision="0" * 63,
@@ -48,7 +70,7 @@ def test_mcp_reflect_tool_returns_grounded_sources(monkeypatch, tmp_path):
     store = mcp_server._store(prepare=True)
     store.write("people/test-user", "# Test User\n\nPrefers concise replies.\n")
     monkeypatch.setattr(mcp_server, "_run_reflection", lambda query, pages: "Grounded answer")
-    result = mcp_server.memory_reflect.fn("What does Test User prefer?", limit=3)
+    result = _tool_function(mcp_server.memory_reflect)("What does Test User prefer?", limit=3)
     assert result["reflection"] == "Grounded answer"
     assert result["sources"]
 
@@ -178,7 +200,7 @@ def test_mcp_memory_lint_accepts_fix_and_dry_run(monkeypatch, tmp_path):
         "fix_orphans",
         lambda self, dry_run=False: calls.append(dry_run) or {"fixed": 0},
     )
-    result = mcp_server.memory_lint.fn(fix=True, dry_run=True)
+    result = _tool_function(mcp_server.memory_lint)(fix=True, dry_run=True)
     assert result["fix_orphans"] == {"fixed": 0}
     assert calls == [True]
 
