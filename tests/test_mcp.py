@@ -26,15 +26,17 @@ def _tool_function(tool):
 def _registered_tool_names(server):
     """Return registered tool names across supported FastMCP APIs."""
     get_tools = getattr(server, "get_tools", None)
+    manager = getattr(server, "_tool_manager", None)
     if get_tools is not None:
         tools = asyncio.run(get_tools())
     else:
-        manager = getattr(server, "_tool_manager", None)
         manager_get_tools = getattr(manager, "get_tools", None)
-        if manager_get_tools is not None:
-            tools = asyncio.run(manager_get_tools())
-        else:
-            tools = getattr(manager, "_tools", {})
+        tools = asyncio.run(manager_get_tools()) if manager_get_tools is not None else {}
+
+    # Some FastMCP releases expose an empty async result before lazy loading;
+    # the registered tool map remains the reliable fallback for this contract.
+    if not tools:
+        tools = getattr(manager, "_tools", {})
     return set(tools)
 
 
