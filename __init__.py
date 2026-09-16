@@ -88,7 +88,10 @@ def _mcp_error_detail(exc: Exception) -> str:
 async def _call_mcp(url: str, tool_name: str, arguments: dict) -> dict:
     if ClientSession is None or streamable_http_client is None:
         raise RuntimeError("MCP Python SDK is not installed")
-    async with streamable_http_client(url) as (read, write, _):
+    async with streamable_http_client(url) as streams:
+        # MCP SDK 2.0.x yields (read, write), while older releases yielded
+        # (read, write, metadata). Only the streams are needed here.
+        read, write = streams[0], streams[1]
         async with ClientSession(read, write) as client:
             await client.initialize()
             result = await client.call_tool(tool_name, arguments)
