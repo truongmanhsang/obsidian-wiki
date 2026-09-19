@@ -15,6 +15,7 @@ from tests.support import (
     _call,
     _load_module,
     _load_provider_for_tests,
+    valid_page_content,
 )
 
 def test_default_vault_path_is_portable(monkeypatch, tmp_path):
@@ -117,8 +118,11 @@ def test_search_matches_accented_and_unaccented_latin_metadata(tmp_path):
     store.ensure_ready()
     store.write(
         "concepts/coffee",
-        "---\ntype: concept\naliases: [Cà phê]\ntags: [beverage]\n"
-        "search_terms: [café drink]\n---\n# Cà phê\n\nA café drink.\n",
+        valid_page_content(
+            "concepts/coffee",
+            "---\ntype: concept\naliases: [Cà phê]\ntags: [drink]\n"
+            "search_terms: [café drink, beverage]\n---\n# Cà phê\n\nA café drink.\n",
+        ),
     )
 
     for query in ("cà phê", "ca phe", "cafe drink", "beverage"):
@@ -132,7 +136,7 @@ def test_search_rebuilds_legacy_fts_schema_with_projection_column(tmp_path):
 
     store = MemoryStore(tmp_path / "vault")
     store.ensure_ready()
-    store.write("concepts/legacy", "# Legacy Search\n\nUnicode indexing.\n")
+    store.write("concepts/legacy", valid_page_content("concepts/legacy", "# Legacy Search\n\nUnicode indexing.\n"))
     store.search("initial index build", limit=5)
 
     db = store.root / "fts.db"
@@ -161,13 +165,16 @@ def test_fts_search_matches_metadata_in_search_projection(tmp_path):
     store.ensure_ready()
     store.write(
         "entities/metadata-only",
-        "---\n"
-        "type: entity\n"
-        "aliases: [Projection Alias]\n"
-        "tags: [projection-test]\n"
-        "search_terms: [unique projection keyword]\n"
-        "---\n"
-        "# Metadata Entity\n\nBody has no searchable phrase.\n",
+        valid_page_content(
+            "entities/metadata-only",
+            "---\n"
+            "type: entity\n"
+            "aliases: [Projection Alias]\n"
+            "tags: [projection-test]\n"
+            "search_terms: [unique projection keyword]\n"
+            "---\n"
+            "# Metadata Entity\n\nBody has no searchable phrase.\n",
+        ),
     )
 
     result = store.search("unique projection keyword", limit=5)
@@ -223,10 +230,13 @@ def test_vietnamese_relationship_attribute_query_finds_curated_person_page(
     store.ensure_ready()
     store.write(
         "people/example-partner",
-        "---\ntype: person\naliases: [Example Partner, Example Partner]\n"
-        "relations:\n  - subject: test-user\n    relation: partner\n---\n"
-        "# Example Partner\n\nPartner of Test User.\n\n"
-        "Date of birth: 7 February 1997\n",
+        valid_page_content(
+            "people/example-partner",
+            "---\ntype: person\naliases: [Example Partner, Example Partner]\n"
+            "relations:\n  - subject: test-user\n    relation: partner\n---\n"
+            "# Example Partner\n\nPartner of Test User.\n\n"
+            "Date of birth: 7 February 1997\n",
+        ),
     )
     monkeypatch.setattr(fts, "_embedding_search", lambda *args, **kwargs: [])
 
@@ -243,7 +253,7 @@ def test_vector_embedding_fallback_runs_only_after_lexical_miss(monkeypatch, tmp
 
     store = MemoryStore(tmp_path / "vault")
     store.ensure_ready()
-    store.write("people/example-partner", "# Example Partner\n\nPartner of Test User.\n")
+    store.write("people/example-partner", valid_page_content("people/example-partner", "# Example Partner\n\nPartner of Test User.\n"))
     monkeypatch.setattr(fts, "_get_embedder", lambda: FakeEmbedder())
     fts._reset_embedder_for_tests()
 
@@ -259,7 +269,7 @@ def test_vector_embedding_fallback_filters_below_threshold(monkeypatch, tmp_path
 
     store = MemoryStore(tmp_path / "vault")
     store.ensure_ready()
-    store.write("concepts/trading", "# Trading\n\nRisk management for markets.\n")
+    store.write("concepts/trading", valid_page_content("concepts/trading", "# Trading\n\nRisk management for markets.\n"))
     monkeypatch.setattr(fts, "_get_embedder", lambda: FakeEmbedder())
     fts._reset_embedder_for_tests()
 
@@ -273,8 +283,8 @@ def test_hybrid_search_runs_embedding_on_weak_lexical_hits_and_merges(monkeypatc
 
     store = MemoryStore(tmp_path / "vault")
     store.ensure_ready()
-    store.write("people/example-partner", "# Example Partner\n\nPartner of Test User.\n")
-    store.write("concepts/calendar", "# Calendar\n\nBirthday reminders.\n")
+    store.write("people/example-partner", valid_page_content("people/example-partner", "# Example Partner\n\nPartner of Test User.\n"))
+    store.write("concepts/calendar", valid_page_content("concepts/calendar", "# Calendar\n\nBirthday reminders.\n"))
     calls = []
 
     def fake_embedding_search(vault, query, limit=5, threshold=None):
@@ -306,8 +316,11 @@ def test_hybrid_search_does_not_embed_exact_name_match(monkeypatch, tmp_path):
     store.ensure_ready()
     store.write(
         "people/example-partner",
-        "---\ntype: person\naliases: [Example Partner]\n---\n"
-        "# Example Partner\n\nPartner of Test User.\n",
+        valid_page_content(
+            "people/example-partner",
+            "---\ntype: person\naliases: [Example Partner]\n---\n"
+            "# Example Partner\n\nPartner of Test User.\n",
+        ),
     )
     monkeypatch.setattr(
         fts, "_embedding_search",
@@ -335,7 +348,7 @@ def test_vector_embeddings_are_cached_and_reused(monkeypatch, tmp_path):
     monkeypatch.setattr(fts, "_get_embedder", lambda: embedder)
     store = MemoryStore(tmp_path / "vault")
     store.ensure_ready()
-    store.write("people/example-partner", "# Example Partner\n\nPartner of Test User.\n")
+    store.write("people/example-partner", valid_page_content("people/example-partner", "# Example Partner\n\nPartner of Test User.\n"))
 
     store.search("partner of mine", limit=5)
     assert len(embedder.calls) == 2
@@ -368,7 +381,7 @@ def test_empty_expected_revision_is_treated_as_create(tmp_path):
     store.ensure_ready()
     created = store.write(
         "concepts/empty-revision-create",
-        "# Empty Revision Create\n\nA new page must accept an empty revision marker.\n",
+        valid_page_content("concepts/empty-revision-create", "# Empty Revision Create\n\nA new page must accept an empty revision marker.\n"),
         expected_revision="",
     )
     assert created["status"] == "created"
@@ -379,14 +392,14 @@ def test_malformed_expected_revision_is_rejected_for_all_mutations(tmp_path):
 
     store = MemoryStore(tmp_path / "vault")
     store.ensure_ready()
-    created = store.write("concepts/revision-format", "# Revision Format\n\nOriginal content.\n")
+    created = store.write("concepts/revision-format", valid_page_content("concepts/revision-format", "# Revision Format\n\nOriginal content.\n"))
     revision = store.read("concepts/revision-format")["revision"]
     malformed = revision[:-1]
 
     with pytest.raises(MemoryWriteError, match="invalid expected_revision format"):
         store.write(
             "concepts/revision-format",
-            "# Revision Format\n\nChanged content.\n",
+            valid_page_content("concepts/revision-format", "# Revision Format\n\nChanged content.\n"),
             expected_revision=malformed,
         )
     with pytest.raises(MemoryWriteError, match="invalid expected_revision format"):
@@ -408,19 +421,19 @@ def test_shared_core_write_revision_and_lock(tmp_path):
 
     store = MemoryStore(tmp_path / "vault")
     store.ensure_ready()
-    created = store.write("concepts/shared-core", "# Shared Core\n\nA durable memory page with enough content.\n")
+    created = store.write("concepts/shared-core", valid_page_content("concepts/shared-core", "# Shared Core\n\nA durable memory page with enough content.\n"))
     assert created["status"] == "created"
     revision = store.read("concepts/shared-core")["revision"]
     updated = store.write(
         "concepts/shared-core",
-        "# Shared Core\n\nUpdated durable memory content.\n",
+        valid_page_content("concepts/shared-core", "# Shared Core\n\nUpdated durable memory content.\n"),
         expected_revision=revision,
     )
     assert updated["status"] == "updated"
     assert store.read("concepts/shared-core")["revision"] != revision
 
     with pytest.raises(Exception, match="revision conflict"):
-        store.write("concepts/shared-core", "# Stale\n\nRejected stale update.\n", expected_revision=revision)
+        store.write("concepts/shared-core", valid_page_content("concepts/shared-core", "# Stale\n\nRejected stale update.\n"), expected_revision=revision)
 
 
 def test_capture_measures_dialogue_not_markdown_metadata():
@@ -570,6 +583,31 @@ class TestWritePath:
         text = open(r["path"]).read()
         assert "type: entity" in text and "updated: 20" in text
 
+    def test_write_rejects_invalid_structure_without_creating_file(self, provider):
+        result = _call(
+            provider,
+            action="write",
+            page="concepts/bad-structure",
+            content="# Bad Structure\n\nOnly an intro.\n",
+            _raw_structure=True,
+        )
+        assert result["error"] == "structure_validation"
+        assert "missing_profile_section" in result["message"]
+        assert not (provider._get_vault().root / "concepts/bad-structure.md").exists()
+
+    def test_write_accepts_valid_concept_structure(self, provider):
+        result = _call(
+            provider,
+            action="write",
+            page="concepts/good-structure",
+            content=(
+                "# Good Structure\n\nSummary.\n\n"
+                "## Core Content\n\nDurable content.\n\n"
+                "## Related\n\n- [[concepts/other]]\n"
+            ),
+        )
+        assert result["status"] == "created"
+
     def test_write_updates_index_and_log(self, provider):
         _call(provider, action="write", page="entities/A",
               content="# A\n\nBody.\n")
@@ -619,7 +657,7 @@ class TestWritePath:
         assert "error" in r
 
     def test_short_content_rejected(self, provider):
-        r = _call(provider, action="write", page="entities/x", content="# x\n")
+        r = _call(provider, action="write", page="entities/x", content="# x\n", _raw_structure=True)
         assert "error" in r
 
     def test_append_preserves_existing_content_and_requires_revision(self, provider):
@@ -639,6 +677,50 @@ class TestWritePath:
         missing_revision = _call(provider, action="append", page="concepts/append-me",
                                  content="Should be rejected.\n")
         assert missing_revision["error"] == "revision_conflict"
+
+    def test_append_rejects_invalid_merged_document_without_mutation(self, provider):
+        _call(
+            provider,
+            action="write",
+            page="concepts/append-structure",
+            content=(
+                "# Append Structure\n\nSummary.\n\n"
+                "## Core Content\n\nOriginal.\n\n## Related\n"
+            ),
+        )
+        revision = _call(provider, action="read", page="concepts/append-structure")["revision"]
+        result = _call(
+            provider,
+            action="append",
+            page="concepts/append-structure",
+            content="## Core Content\n\nDuplicate heading.\n",
+            expected_revision=revision,
+        )
+        assert result["error"] == "structure_validation"
+        assert "duplicate_heading" in result["message"]
+        assert _call(provider, action="read", page="concepts/append-structure")["revision"] == revision
+
+    def test_append_keeps_terminal_sections_at_end(self, provider):
+        _call(
+            provider,
+            action="write",
+            page="concepts/append-order",
+            content=(
+                "# Append Order\n\nSummary.\n\n"
+                "## Core Content\n\nOriginal.\n\n## Related\n"
+            ),
+        )
+        revision = _call(provider, action="read", page="concepts/append-order")["revision"]
+        result = _call(
+            provider,
+            action="append",
+            page="concepts/append-order",
+            content="## Findings\n\nNew finding.\n",
+            expected_revision=revision,
+        )
+        assert result["status"] == "updated"
+        text = _call(provider, action="read", page="concepts/append-order")["content"]
+        assert text.index("## Findings") < text.index("## Related")
 
     def test_append_rejects_missing_page(self, provider):
         result = _call(provider, action="append", page="concepts/does-not-exist",
@@ -678,7 +760,7 @@ class TestWritePath:
 
         store = MemoryStore(str(tmp_path / "vault"))
         store.ensure_ready()
-        store.write("concepts/persist-check", "# Persist Check\n\nOriginal content.\n")
+        store.write("concepts/persist-check", valid_page_content("concepts/persist-check", "# Persist Check\n\nOriginal content.\n"))
         page = store.read("concepts/persist-check")
         original_write_page = store.vault.write_page
 
@@ -779,9 +861,9 @@ class TestWritePath:
     def test_auto_fill_handles_missing_h1_and_duplicate_title(self, provider):
         # No H1 still gets a filename alias; identical H1/filename is deduped.
         no_h1 = _call(provider, action="write", page="entities/no-heading",
-                      content="body without a heading but enough content\n")
-        no_h1_text = open(no_h1["path"]).read()
-        assert "aliases: ['No Heading']" in no_h1_text
+                      content="body without a heading but enough content\n",
+                      _raw_structure=True)
+        assert no_h1["error"] == "structure_validation"
         dup = _call(provider, action="write", page="entities/same-title",
                     content="# Same Title\n\nbody for duplicate alias check\n")
         dup_text = open(dup["path"]).read()
@@ -815,6 +897,29 @@ class TestReadSearch:
 
 
 class TestLint:
+    def test_lint_reports_structure_errors_without_rewriting(self, tmp_path):
+        from obsidian_memory_core.wiki.vault import WikiVault
+
+        vault = WikiVault(str(tmp_path / "vault"))
+        vault.ensure_skeleton()
+        path = vault.root / "concepts/legacy.md"
+        original = "# Legacy\n\nOld content without the required profile sections.\n"
+        path.write_text(original, encoding="utf-8")
+
+        result = vault.lint()
+
+        assert result["problems"]["structure"]
+        finding = next(
+            item for item in result["problems"]["structure"]
+            if item["path"] == "concepts/legacy.md"
+        )
+        issue_codes = {
+            issue["code"]
+            for issue in finding["errors"] + finding["warnings"]
+        }
+        assert "missing_profile_section" in issue_codes
+        assert path.read_text(encoding="utf-8") == original
+
     def _write_without_auto_heal(self, provider, page, content):
         vault = provider._get_vault()
         vault._auto_heal_in_progress = True
@@ -1154,7 +1259,9 @@ class TestCategoryNavigation:
             f"tags: [{tag}]\n"
             f"aliases: [{title}]\n"
             "---\n\n"
-            f"# {title}\n\nA {tag} page.\n"
+            f"# {title}\n\nA {tag} page.\n\n"
+            "## Core Content\n\nCategory test content.\n\n"
+            "## Related\n"
         )
 
     def test_reuses_matching_category_index(self, tmp_path):
@@ -1223,4 +1330,3 @@ class TestCategoryNavigation:
         vault.write_page("concepts/stable", content)
         index = vault.root / "concepts/index-operations.md"
         assert index.read_text().count("[[concepts/stable.md|Stable]]") == 1
-

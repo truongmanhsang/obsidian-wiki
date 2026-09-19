@@ -144,11 +144,11 @@ if str(_PLUGIN_DIR) not in sys.path:
 try:  # submodule import when loaded as a package
     from .obsidian_memory_core import MemoryStore, RevisionConflict
     from .obsidian_memory_core.config import DEFAULT_VAULT_PATH, vault_path
-    from .obsidian_memory_core.wiki import WikiVault, WikiVaultError
+    from .obsidian_memory_core.wiki import WikiVault, WikiVaultError, StructureValidationError
 except ImportError:  # pragma: no cover - flat import fallback
     from obsidian_memory_core import MemoryStore, RevisionConflict  # type: ignore
     from obsidian_memory_core.config import DEFAULT_VAULT_PATH, vault_path  # type: ignore
-    from obsidian_memory_core.wiki import WikiVault, WikiVaultError  # type: ignore
+    from obsidian_memory_core.wiki import WikiVault, WikiVaultError, StructureValidationError  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -702,6 +702,13 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
             return tool_error(f"Unknown action: {action}")
         except RevisionConflict as e:
             return json.dumps({"error": "revision_conflict", "message": str(e)})
+        except StructureValidationError as e:
+            return json.dumps({
+                "error": "structure_validation",
+                "message": str(e),
+                "page": e.page,
+                "validation": e.report,
+            }, ensure_ascii=False)
         except WikiVaultError as e:
             return tool_error(str(e))
         except Exception as e:

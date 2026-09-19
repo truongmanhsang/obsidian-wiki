@@ -140,7 +140,7 @@ def add_heading_issues(
             seen[normalized] = heading
 
     for index, heading in enumerate(headings):
-        if heading["normalized"] in TERMINAL_HEADINGS:
+        if heading["level"] == 1 or heading["normalized"] in TERMINAL_HEADINGS:
             continue
         if not _section_content(body, headings, index):
             errors.append(_issue(

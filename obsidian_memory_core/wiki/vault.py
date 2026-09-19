@@ -18,6 +18,7 @@ from obsidian_memory_core.wiki.log import LOG_HEADER, append_log as _append_log_
 from obsidian_memory_core.wiki.dedup import detect_duplicates as _detect_duplicates_fn
 from obsidian_memory_core.wiki.generation import generate_index_proposal
 from obsidian_memory_core.wiki.search import search as _search_fn, prefetch_context as _prefetch_fn
+from obsidian_memory_core.wiki.structure import validate_page_structure
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,19 @@ The lesson or workflow, short and actionable.
 
 class WikiVaultError(Exception):
     """Raised for invalid vault operations."""
+
+
+class StructureValidationError(WikiVaultError):
+    """Raised when a page fails the universal structure validator."""
+
+    def __init__(self, page: str, report: dict):
+        self.page = page
+        self.report = report
+        issues = report.get("errors", []) + report.get("warnings", [])
+        summary = "; ".join(
+            f"{issue.get('code')}: {issue.get('message')}" for issue in issues
+        ) or "invalid page structure"
+        super().__init__(f"{page}: {summary}")
 
 
 def _auto_fill_aliases_tags(ptype: str, stem: str, content: str) -> tuple[list, list]:
@@ -853,6 +867,19 @@ class WikiVault:
             fm_text = "\n".join(fm_lines) + "\n---\n\n"
             content = FRONTMATTER_RE.sub(lambda m: fm_text, content, count=1)
 
+        _final_meta, final_body = self.parse_frontmatter(content)
+        report = validate_page_structure(
+            content,
+            ptype,
+            mode="strict",
+            expected_title=self.page_title(final_body, path.stem),
+        )
+        if not report["valid"]:
+            raise StructureValidationError(
+                path.relative_to(self.root).as_posix(),
+                report,
+            )
+
         is_new = not path.exists()
         path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(path, content)
@@ -1285,7 +1312,21 @@ class WikiVault:
         stems = _alias_map(pages)
 
         problems = {"orphans": [], "missing_frontmatter": [],
-                    "broken_links": [], "stale_claims": []}
+                    "broken_links": [], "stale_claims": [], "structure": []}
+
+        for page in pages:
+            report = validate_page_structure(
+                page["text"],
+                page["ptype"],
+                mode="lint",
+                expected_title=page["title"],
+            )
+            if report["errors"] or report["warnings"]:
+                problems["structure"].append({
+                    "path": page["rel"],
+                    "errors": report["errors"],
+                    "warnings": report["warnings"],
+                })
 
         # Keep editorial inbound links separate from generated root-index
         # navigation. The latter makes a page reachable for orphan detection,

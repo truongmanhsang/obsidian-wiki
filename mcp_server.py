@@ -18,6 +18,7 @@ from fastmcp import FastMCP
 
 from obsidian_memory_core import IngestJobManager, InvalidRevisionFormat, MemoryStore, RevisionConflict, MemoryWriteError
 from obsidian_memory_core.config import vault_path
+from obsidian_memory_core.wiki import StructureValidationError
 
 
 
@@ -163,6 +164,13 @@ def memory_write(
     """
     try:
         return _store(prepare=True).write(page, content, note, expected_revision, allow_duplicate)
+    except StructureValidationError as exc:
+        return {
+            "error": "structure_validation",
+            "message": str(exc),
+            "page": exc.page,
+            "validation": exc.report,
+        }
     except RevisionConflict as exc:
         return {"error": "revision_conflict", "message": str(exc)}
     except InvalidRevisionFormat as exc:
@@ -181,6 +189,13 @@ def memory_append(
     """Append to an existing page without replacing its previous content."""
     try:
         return _store(prepare=True).append(page, content, note, expected_revision)
+    except StructureValidationError as exc:
+        return {
+            "error": "structure_validation",
+            "message": str(exc),
+            "page": exc.page,
+            "validation": exc.report,
+        }
     except RevisionConflict as exc:
         return {"error": "revision_conflict", "message": str(exc)}
     except InvalidRevisionFormat as exc:

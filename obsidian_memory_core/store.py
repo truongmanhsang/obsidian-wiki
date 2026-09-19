@@ -40,7 +40,13 @@ def _unlock_file(fh: Any) -> None:
     fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 _REVISION_PATTERN = re.compile(r"[0-9a-f]{64}")
-from .wiki import WikiVault, WikiVaultError
+from .wiki import (
+    DIR_TYPES,
+    StructureValidationError,
+    WikiVault,
+    WikiVaultError,
+)
+from .wiki.structure import validate_page_structure
 
 
 class MemoryWriteError(WikiVaultError):
@@ -247,6 +253,20 @@ class MemoryStore:
             else:
                 separator = "" if previous.endswith("\n\n") else "\n"
                 merged = previous + separator + content.lstrip("\n")
+            page_type = DIR_TYPES.get(path.relative_to(self.root).parts[0])
+            report = validate_page_structure(
+                merged,
+                page_type or "",
+                mode="strict",
+                expected_title=self.vault.page_title(
+                    self.vault.parse_frontmatter(merged)[1], path.stem
+                ),
+            )
+            if not report["valid"]:
+                raise StructureValidationError(
+                    path.relative_to(self.root).as_posix(),
+                    report,
+                )
             result = self.vault.write_page(page, merged, note=note, allow_duplicate=True)
             # A synced vault can be rewritten by another filesystem actor
             # immediately after write_page() returns. Never report success

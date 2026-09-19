@@ -15,6 +15,7 @@ from tests.support import (
     _call,
     _load_module,
     _load_provider_for_tests,
+    valid_page_content,
 )
 
 
@@ -65,12 +66,48 @@ def test_mcp_memory_write_reports_invalid_revision_format(monkeypatch, tmp_path)
     }
 
 
+def test_mcp_memory_write_reports_structure_validation(monkeypatch, tmp_path):
+    import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_SERVER_VAULT_PATH", str(tmp_path / "vault"))
+    write = _tool_function(mcp_server.memory_write)
+    result = write("concepts/invalid-structure", "# Invalid\n\nOnly an intro.\n")
+
+    assert result["error"] == "structure_validation"
+    assert result["page"] == "concepts/invalid-structure.md"
+    assert "missing_profile_section" in {
+        issue["code"] for issue in result["validation"]["warnings"] + result["validation"]["errors"]
+    }
+
+
+def test_mcp_memory_append_reports_structure_validation(monkeypatch, tmp_path):
+    import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_SERVER_VAULT_PATH", str(tmp_path / "vault"))
+    write = _tool_function(mcp_server.memory_write)
+    append = _tool_function(mcp_server.memory_append)
+    created = write(
+        "concepts/append-structure",
+        "# Append Structure\n\nSummary.\n\n## Core Content\n\nOriginal.\n\n## Related\n",
+    )
+    result = append(
+        "concepts/append-structure",
+        "## Core Content\n\nDuplicate heading.\n",
+        expected_revision=created["revision"],
+    )
+
+    assert result["error"] == "structure_validation"
+    assert "duplicate_heading" in {
+        issue["code"] for issue in result["validation"]["errors"]
+    }
+
+
 def test_mcp_reflect_tool_returns_grounded_sources(monkeypatch, tmp_path):
     import mcp_server
 
     mcp_server._SERVER_VAULT_PATH = str(tmp_path / "vault")
     store = mcp_server._store(prepare=True)
-    store.write("people/test-user", "# Test User\n\nPrefers concise replies.\n")
+    store.write("people/test-user", valid_page_content("people/test-user", "# Test User\n\nPrefers concise replies.\n"))
     monkeypatch.setattr(mcp_server, "_run_reflection", lambda query, pages: "Grounded answer")
     result = _tool_function(mcp_server.memory_reflect)("What does Test User prefer?", limit=3)
     assert result["reflection"] == "Grounded answer"
