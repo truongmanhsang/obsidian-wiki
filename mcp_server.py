@@ -90,9 +90,28 @@ def _ingest_manager() -> IngestJobManager:
 
 
 @mcp.tool()
-def memory_search(query: str, limit: int = 5) -> dict[str, Any]:
+def memory_search(
+    query: str,
+    limit: int = 5,
+    type: str | None = None,
+    tags: list[str] | None = None,
+    updated_after: str | None = None,
+    path_prefix: str | None = None,
+    include_sources: bool = False,
+) -> dict[str, Any]:
     """Search durable project, people, decision, and concept memory."""
-    return _store().search(query, max(1, min(limit, 50)))
+    filters = {
+        key: value
+        for key, value in {
+            "type": type,
+            "tags": tags,
+            "updated_after": updated_after,
+            "path_prefix": path_prefix,
+            "include_sources": include_sources,
+        }.items()
+        if value is not None
+    }
+    return _store().search(query, max(1, min(limit, 50)), filters=filters)
 
 
 @mcp.tool()

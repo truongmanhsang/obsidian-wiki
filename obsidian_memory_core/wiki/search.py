@@ -1,11 +1,138 @@
 
 """Search and prefetch helpers."""
 from __future__ import annotations
+
+from datetime import date
 import re
+from collections.abc import Mapping
+from typing import TypedDict
+
 from .links import TOKEN_RE, _alias_map
 from .intent import normalize_search, query_tokens
 
-def search(vault, query: str, limit: int = 5) -> list[dict]:
+
+class SearchFilters(TypedDict):
+    """Normalized filters consumed by every search stage."""
+
+    type: str | None
+    tags: frozenset[str]
+    updated_after: str | None
+    path_prefix: str | None
+    include_sources: bool
+
+
+def _as_text_list(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = value.strip().strip("[]")
+        if not value:
+            return []
+        values = value.split(",")
+    else:
+        values = value if isinstance(value, (list, tuple, set, frozenset)) else [value]
+    return [str(item).strip().strip("'\"") for item in values if str(item).strip()]
+
+
+def _normalize_path_prefix(value) -> str | None:
+    if value is None:
+        return None
+    prefix = str(value).strip().replace("\\", "/").strip("/")
+    if prefix.startswith("./"):
+        prefix = prefix[2:]
+    return prefix or None
+
+
+def normalize_search_filters(filters: Mapping | None = None) -> SearchFilters:
+    """Normalize supported search filters into a stable internal shape."""
+    if filters is None:
+        filters = {}
+    if not isinstance(filters, Mapping):
+        raise TypeError("search filters must be a mapping")
+
+    raw_type = filters.get("type")
+    page_type = str(raw_type).strip().casefold() if raw_type is not None else None
+    page_type = page_type or None
+    tags = {
+        normalize_search(tag)
+        for tag in _as_text_list(filters.get("tags"))
+        if normalize_search(tag)
+    }
+    updated_after = filters.get("updated_after")
+    if updated_after is not None:
+        updated_after = str(updated_after).strip()
+        if updated_after:
+            try:
+                date.fromisoformat(updated_after)
+            except ValueError as exc:
+                raise ValueError("updated_after must be an ISO date (YYYY-MM-DD)") from exc
+        else:
+            updated_after = None
+
+    return {
+        "type": page_type,
+        "tags": frozenset(tags),
+        "updated_after": updated_after,
+        "path_prefix": _normalize_path_prefix(filters.get("path_prefix")),
+        "include_sources": bool(filters.get("include_sources", False)),
+    }
+
+
+def page_matches_filters(page: Mapping, filters: Mapping | None = None) -> bool:
+    """Return whether a loaded page satisfies all supported search filters."""
+    normalized = normalize_search_filters(filters)
+    page_type = str(page.get("ptype") or page.get("type") or "").casefold()
+    if not normalized["include_sources"] and page_type == "source":
+        return False
+    if normalized["type"] and page_type != normalized["type"]:
+        return False
+
+    metadata = page.get("meta") or {}
+    page_tags = {
+        normalize_search(tag)
+        for tag in _as_text_list(metadata.get("tags"))
+        if normalize_search(tag)
+    }
+    if not normalized["tags"].issubset(page_tags):
+        return False
+
+    updated_after = normalized["updated_after"]
+    if updated_after:
+        try:
+            if date.fromisoformat(str(page.get("updated") or "")) < date.fromisoformat(updated_after):
+                return False
+        except ValueError:
+            return False
+
+    prefix = normalized["path_prefix"]
+    if prefix:
+        rel = str(page.get("rel") or page.get("path") or "").replace("\\", "/").lstrip("/")
+        if not (rel == prefix or rel.startswith(prefix + "/")):
+            return False
+    return True
+
+
+def _identity_candidates(page: Mapping) -> list[str]:
+    metadata = page.get("meta") or {}
+    aliases = _as_text_list(metadata.get("aliases"))
+    title = str(page.get("title") or "")
+    stem = str(page.get("stem") or "")
+    return [title, stem.replace("-", " ").replace("_", " "), *aliases]
+
+
+def exact_page_match(page: Mapping, query: str) -> bool:
+    """Return true when query exactly identifies a page title, stem, or alias."""
+    normalized_query = normalize_search(query)
+    if len(normalized_query) < 3:
+        return False
+    return any(
+        normalized_query == normalize_search(candidate)
+        for candidate in _identity_candidates(page)
+        if candidate.strip()
+    )
+
+
+def search(vault, query: str, limit: int = 5, filters: Mapping | None = None) -> list[dict]:
     from .vault import VALID_TYPES  # noqa
     query_low = normalize_search(query)
     # TOKEN_RE is intentionally ASCII-oriented for wikilinks, but memory
@@ -15,7 +142,8 @@ def search(vault, query: str, limit: int = 5) -> list[dict]:
     tokens = query_tokens(query)
     results = []
     # Raw session transcripts are private source material, not ordinary searchable memory.
-    all_pages = [p for p in vault.load_pages() if p["ptype"] != "source"]
+    normalized_filters = normalize_search_filters(filters)
+    all_pages = [p for p in vault.load_pages() if page_matches_filters(p, normalized_filters)]
     aliases = _alias_map(all_pages)
     alias_tokens = [a for a in re.findall(r"[^\W_]{2,}", query_low, flags=re.UNICODE)
                     if a in aliases and a not in vault.STOPWORDS]

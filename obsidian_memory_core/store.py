@@ -139,8 +139,8 @@ class MemoryStore:
             "revision": revision,
         }
 
-    def search(self, query: str, limit: int = 5) -> dict[str, Any]:
-        results = self.vault.search(query, limit=limit)
+    def search(self, query: str, limit: int = 5, filters: dict | None = None) -> dict[str, Any]:
+        results = self.vault.search(query, limit=limit, filters=filters)
         return {"results": results, "count": len(results)}
 
     def list(self, limit: int = 50) -> dict[str, Any]:
@@ -321,7 +321,22 @@ class MemoryStore:
 
     def call(self, action: str, **kwargs: Any) -> dict[str, Any]:
         if action == "read": return self.read(kwargs["page"])
-        if action == "search": return self.search(kwargs["query"], int(kwargs.get("limit", 5)))
+        if action == "search":
+            filters = kwargs.get("filters")
+            if filters is None:
+                filter_keys = {
+                    "type", "tags", "updated_after", "path_prefix", "include_sources",
+                }
+                filters = {
+                    key: kwargs[key]
+                    for key in filter_keys
+                    if key in kwargs and kwargs[key] is not None
+                }
+            return self.search(
+                kwargs["query"],
+                int(kwargs.get("limit", 5)),
+                filters=filters,
+            )
         if action == "list": return self.list(int(kwargs.get("limit", 50)))
         if action == "lint":
             if kwargs.get("fix"):

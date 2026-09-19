@@ -8,7 +8,12 @@ import json
 from datetime import date
 from pathlib import Path
 from .links import TOKEN_RE
-from .search import query_tokens
+from .search import (
+    exact_page_match,
+    normalize_search_filters,
+    page_matches_filters,
+    query_tokens,
+)
 from .intent import normalize_search, page_anchor_score, page_search_text
 from obsidian_memory_core.db.migrations import upgrade
 from obsidian_memory_core.db.models import EmbeddingPage, FtsMeta, FtsPage
@@ -71,12 +76,20 @@ def _load_or_build_embeddings(vault, pages):
         return {}, None
 
 
-def _embedding_search(vault, query: str, limit: int = 5, threshold: float | None = None):
+def _embedding_search(
+    vault,
+    query: str,
+    limit: int = 5,
+    threshold: float | None = None,
+    pages: list[dict] | None = None,
+):
     embedder = _get_embedder()
     if embedder is None:
         return []
     threshold = _EMBEDDING_THRESHOLD if threshold is None else threshold
-    pages = [p for p in vault.load_pages() if p["ptype"] != "source"]
+    pages = list(pages) if pages is not None else [
+        p for p in vault.load_pages() if p["ptype"] != "source"
+    ]
     if not pages:
         return []
     try:
@@ -191,40 +204,64 @@ def _fts_rows(vault, query, limit=100):
             return [tuple(row) for row in session.execute(statement).all()]
     finally: engine.dispose()
 
-def search_fts(vault, query, limit=100):
+def search_fts(vault, query, limit=100, pages: list[dict] | None = None):
     rows = _fts_rows(vault, query, limit)
     tokens = query_tokens(query)
-    return [{"path":r[0],"title":r[1],"type":r[3],"updated":r[4],"fts_rank":-float(r[5]),"snippet":next((x.strip()[:180] for x in r[2].splitlines() if any(t in normalize_search(x) for t in tokens)),"")} for r in rows]
+    allowed = None if pages is None else {page["rel"] for page in pages}
+    return [
+        {
+            "path": r[0],
+            "title": r[1],
+            "type": r[3],
+            "updated": r[4],
+            "fts_rank": -float(r[5]),
+            "snippet": next(
+                (x.strip()[:180] for x in r[2].splitlines() if any(t in normalize_search(x) for t in tokens)),
+                "",
+            ),
+        }
+        for r in rows
+        if allowed is None or r[0] in allowed
+    ]
 
-def _has_exact_curated_match(vault, query: str, results: list[dict]) -> bool:
+def _has_exact_curated_match(
+    vault,
+    query: str,
+    results: list[dict],
+    pages_by_path: dict[str, dict] | None = None,
+) -> bool:
     """Return true when lexical search found the requested name/alias exactly."""
-    normalized = normalize_search(query)
-    if len(normalized) < 3:
-        return False
+    pages_by_path = pages_by_path or {
+        page["rel"]: page for page in vault.load_pages()
+    }
     for result in results:
-        page = next((p for p in vault.load_pages() if p["rel"] == result["path"]), None)
+        page = pages_by_path.get(result["path"])
         if page is None:
             continue
-        candidates = [page["title"], page["stem"]]
-        aliases = page["meta"].get("aliases", [])
-        candidates.extend(aliases if isinstance(aliases, list) else [str(aliases)])
-        for value in candidates:
-            candidate = normalize_search(value)
-            if candidate and (normalized == candidate or candidate in normalized):
-                return True
+        if exact_page_match(page, query):
+            return True
     return False
 
 
-def hybrid_search(vault, query, limit=5):
+def hybrid_search(vault, query, limit=5, filters: dict | None = None):
     if not isinstance(query, str) or not query.strip(): return []
+    normalized_filters = normalize_search_filters(filters)
     ensure_fresh(vault)
-    fts = [r for r in search_fts(vault, query, limit=100) if r["type"] != "source"]
-    kw = [r for r in vault._keyword_search(query, limit=100) if r["type"] != "source"]
+    pages = [
+        page for page in vault.load_pages()
+        if page_matches_filters(page, normalized_filters)
+    ]
+    eligible_paths = {page["rel"] for page in pages}
+    fts = search_fts(vault, query, limit=100, pages=pages)
+    kw = [
+        result for result in vault._keyword_search(query, limit=100)
+        if result["path"] in eligible_paths
+    ]
     by_path = {r['path']: dict(r) for r in fts}
     for r in kw:
         by_path.setdefault(r['path'], {}).update(r)
 
-    pages_by_path = {p["rel"]: p for p in vault.load_pages() if p["ptype"] != "source"}
+    pages_by_path = {p["rel"]: p for p in pages}
 
     # First score lexical candidates. Embeddings are also consulted when the
     # lexical result is empty, weak, or lacks an exact name/alias match.
@@ -250,13 +287,30 @@ def hybrid_search(vault, query, limit=5):
 
     lexical = list(by_path.values())
     lexical_scores = {r['path']: r['score'] for r in lexical}
-    exact = _has_exact_curated_match(vault, query, lexical)
+    exact_paths = {
+        result["path"]
+        for result in lexical
+        if exact_page_match(pages_by_path.get(result["path"], {}), query)
+    }
+    for result in lexical:
+        if result["path"] in exact_paths:
+            result["_exact"] = True
+            result["match"] = "exact"
+    exact = bool(exact_paths)
     top_lexical = max(lexical_scores.values(), default=0.0)
     # A normalized lexical score is not evidence that the query was answered:
     # a page matching only generic words can still score 1.0.  Unless the
     # complete query is an exact title/alias, consult semantic search.
     if not exact:
-        vector_results = _embedding_search(vault, query, limit=max(limit, 10))
+        vector_results = [
+            result for result in _embedding_search(
+                vault,
+                query,
+                limit=max(limit, 10),
+                pages=pages,
+            )
+            if result["path"] in eligible_paths
+        ]
         for vector in vector_results:
             path = vector['path']
             if path in by_path:
@@ -293,4 +347,14 @@ def hybrid_search(vault, query, limit=5):
             result["score"] = round(min(1.0, result.get("score", 0.0) + anchor_score), 4)
             result["match"] = result.get("match", "anchor")
 
-    return sorted(by_path.values(), key=lambda r: (-r['score'], r.get('title','').lower()))[:limit]
+    results = sorted(
+        by_path.values(),
+        key=lambda r: (
+            -int(r.get("_exact", False)),
+            -r["score"],
+            r.get("title", "").casefold(),
+        ),
+    )[:limit]
+    for result in results:
+        result.pop("_exact", None)
+    return results

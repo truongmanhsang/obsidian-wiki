@@ -571,12 +571,33 @@ python3 scripts/wiki_session_capture.py --session <session-id> --force
 
 ## Search fallback
 
-Search uses SQLite FTS5 plus keyword scoring first. Only when both return no
-result does the lazy load `fastembed` and run cosine-similarity search over
-curated pages. Page vectors are persisted in the `embedding_pages` table in
-`fts.db`, keyed by content hash and model name, so unchanged pages are not
-re-embedded. The fallback intentionally avoids `sources/` pages and filters
-by a conservative similarity threshold.
+Search uses SQLite FTS5 plus keyword scoring first. The lazy `fastembed`
+fallback is used for weak lexical results or when no exact title/alias match
+exists, and runs cosine-similarity search over the eligible pages. Exact page
+titles, stems, and aliases are deterministic high-priority matches. Page
+vectors are persisted in the `embedding_pages` table in `fts.db`, keyed by
+content hash and model name, so unchanged pages are not re-embedded. Raw
+`sources/` pages stay excluded unless explicitly requested.
+
+`memory_search` supports precision filters that apply consistently to FTS,
+keyword, and embedding candidates:
+
+```json
+{
+  "query": "retry policy",
+  "limit": 5,
+  "type": "concept",
+  "tags": ["deployment", "reliability"],
+  "updated_after": "2026-01-01",
+  "path_prefix": "concepts",
+  "include_sources": false
+}
+```
+
+`type` is case-insensitive, `tags` requires every listed tag,
+`updated_after` is inclusive, and `path_prefix` uses a vault-relative path.
+The same filters are available through the Hermes wrapper and the standalone
+MCP adapter.
 
 Configuration is available through environment variables:
 
@@ -789,7 +810,7 @@ possible.
 
 | Tool | Input | Behavior |
 |------|-------|----------|
-| `memory_search` | `query`, optional `limit` | Search durable wiki pages |
+| `memory_search` | `query`, optional `limit`, `type`, `tags`, `updated_after`, `path_prefix`, `include_sources` | Search durable wiki pages with optional precision filters |
 | `memory_read` | `page` | Read a page and return its `revision` |
 | `memory_list` | optional `limit` | Return catalog, types, and statistics |
 | `memory_reflect` | `query`, optional `limit` | Synthesize relevant wiki pages with the configured Hermes or Codex provider |

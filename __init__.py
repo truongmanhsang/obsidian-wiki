@@ -232,6 +232,27 @@ WIKI_TOOL_SCHEMA = {
                 "type": "integer",
                 "description": "Max results for search/list (default 5).",
             },
+            "type": {
+                "type": "string",
+                "description": "Search filter: exact page type, case-insensitive.",
+            },
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Search filter: require all listed tags.",
+            },
+            "updated_after": {
+                "type": "string",
+                "description": "Search filter: inclusive ISO date lower bound (YYYY-MM-DD).",
+            },
+            "path_prefix": {
+                "type": "string",
+                "description": "Search filter: restrict results to a relative vault path prefix.",
+            },
+            "include_sources": {
+                "type": "boolean",
+                "description": "Search filter: include raw sources/ pages (default false).",
+            },
             "expected_revision": {
                 "type": "string",
                 "description": "SHA-256 revision from read for safe concurrent updates.",
@@ -656,7 +677,10 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                 if tool_name is not None:
                     allowed_arguments = {
                         "read": {"page"},
-                        "search": {"query", "limit"},
+                        "search": {
+                            "query", "limit", "type", "tags", "updated_after",
+                            "path_prefix", "include_sources",
+                        },
                         "list": {"limit"},
                         "write": {"page", "content", "note", "expected_revision", "allow_duplicate"},
                         "append": {"page", "content", "note", "expected_revision"},
@@ -754,7 +778,19 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
         query = args.get("query", "")
         if not query:
             return tool_error("search requires 'query'")
-        results = vault.search(query, limit=int(args.get("limit", 5)))
+        filter_keys = {
+            "type", "tags", "updated_after", "path_prefix", "include_sources",
+        }
+        filters = {
+            key: args[key]
+            for key in filter_keys
+            if key in args and args[key] is not None
+        }
+        results = vault.search(
+            query,
+            limit=int(args.get("limit", 5)),
+            filters=filters,
+        )
         vault.append_log("QUERY", f"search: {query.strip()[:80]}", quiet=True)
         return json.dumps({"results": results, "count": len(results)},
                           ensure_ascii=False)

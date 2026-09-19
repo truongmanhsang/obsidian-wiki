@@ -183,6 +183,177 @@ def test_fts_search_matches_metadata_in_search_projection(tmp_path):
     assert result["results"][0]["path"] == "entities/metadata-only.md"
 
 
+def test_search_filter_normalization_and_page_matching():
+    from obsidian_memory_core.wiki.search import (
+        exact_page_match,
+        normalize_search_filters,
+        page_matches_filters,
+    )
+
+    page = {
+        "rel": "people/example-partner.md",
+        "title": "Example Partner",
+        "stem": "example-partner",
+        "ptype": "person",
+        "updated": "2026-09-19",
+        "meta": {
+            "aliases": ["Partner Alias"],
+            "tags": ["Family", "Profile"],
+        },
+    }
+
+    filters = normalize_search_filters({
+        "type": "PERSON",
+        "tags": ["family", "profile"],
+        "updated_after": "2026-09-01",
+        "path_prefix": "./people/",
+        "include_sources": False,
+    })
+
+    assert page_matches_filters(page, filters)
+    assert page_matches_filters(
+        {**page, "meta": {"tags": "family, profile", "aliases": "Partner Alias"}},
+        filters,
+    )
+    assert exact_page_match(page, "partner alias")
+    assert not page_matches_filters(page, {"type": "concept"})
+
+
+def test_search_filters_and_source_opt_in(tmp_path):
+    from obsidian_memory_core import MemoryStore
+
+    store = MemoryStore(tmp_path / "vault")
+    store.ensure_ready()
+    store.write(
+        "people/example-partner",
+        valid_page_content(
+            "people/example-partner",
+            "---\n"
+            "type: person\n"
+            "aliases: [Partner Alias]\n"
+            "tags: [family, profile]\n"
+            "---\n"
+            "# Example Partner\n\nPartner profile.\n",
+        ),
+    )
+    store.write(
+        "concepts/partner-guide",
+        valid_page_content(
+            "concepts/partner-guide",
+            "---\n"
+            "type: concept\n"
+            "tags: [guide]\n"
+            "---\n"
+            "# Partner Guide\n\nPartner profile guide.\n",
+        ),
+    )
+    store.vault.write_page(
+        "sources/raw-partner.md",
+        "---\n"
+        "type: source\n"
+        "updated: 2026-09-19\n"
+        "---\n"
+        "# Raw Partner\n\nPartner source evidence.\n",
+        allow_source=True,
+    )
+
+    filtered = store.search(
+        "partner",
+        limit=5,
+        filters={
+            "type": "person",
+            "tags": ["family"],
+            "updated_after": "2026-09-19",
+            "path_prefix": "people",
+        },
+    )
+    assert filtered["results"][0]["path"] == "people/example-partner.md"
+    assert all(row["type"] == "person" for row in filtered["results"])
+
+    default_results = store.search("raw partner", limit=5)
+    assert all(not row["path"].startswith("sources/") for row in default_results["results"])
+
+    source_results = store.search(
+        "raw partner",
+        limit=5,
+        filters={"include_sources": True},
+    )
+    assert any(row["path"] == "sources/raw-partner.md" for row in source_results["results"])
+
+
+def test_exact_alias_is_marked_and_prioritized(tmp_path):
+    from obsidian_memory_core import MemoryStore
+
+    store = MemoryStore(tmp_path / "vault")
+    store.ensure_ready()
+    store.write(
+        "people/example-partner",
+        valid_page_content(
+            "people/example-partner",
+            "---\n"
+            "type: person\n"
+            "aliases: [Partner Alias]\n"
+            "---\n"
+            "# Example Partner\n\nPartner profile.\n",
+        ),
+    )
+    store.write(
+        "concepts/partner-alias-mentions",
+        valid_page_content(
+            "concepts/partner-alias-mentions",
+            "# Partner Alias Mentions\n\n"
+            "Partner Alias appears in this generic page several times: "
+            "Partner Alias, Partner Alias.\n",
+        ),
+    )
+
+    result = store.search("Partner Alias", limit=5)
+
+    assert result["results"][0]["path"] == "people/example-partner.md"
+    assert result["results"][0]["match"] == "exact"
+
+
+def test_provider_schema_and_direct_search_forward_filters(tmp_path):
+    provider = _load_provider_for_tests(tmp_path)
+    provider.initialize(session_id="search-filter-test")
+    properties = provider.get_tool_schemas()[0]["parameters"]["properties"]
+    assert {
+        "type", "tags", "updated_after", "path_prefix", "include_sources",
+    }.issubset(properties)
+
+    _call(
+        provider,
+        action="write",
+        page="people/example-partner",
+        content=(
+            "---\ntype: person\ntags: [family]\n---\n"
+            "# Example Partner\n\nPartner profile.\n"
+        ),
+    )
+    _call(
+        provider,
+        action="write",
+        page="concepts/partner-guide",
+        content=(
+            "---\ntype: concept\ntags: [guide]\n---\n"
+            "# Partner Guide\n\nPartner guide.\n"
+        ),
+    )
+
+    result = _call(
+        provider,
+        action="search",
+        query="partner",
+        type="person",
+        tags=["family"],
+        path_prefix="people",
+    )
+
+    assert result["results"]
+    assert result["results"][0]["path"] == "people/example-partner.md"
+    assert all(row["type"] == "person" for row in result["results"])
+
+
 def test_alembic_migrations_run_in_order_once():
     from obsidian_memory_core.db.migrations import upgrade
 
@@ -287,7 +458,7 @@ def test_hybrid_search_runs_embedding_on_weak_lexical_hits_and_merges(monkeypatc
     store.write("concepts/calendar", valid_page_content("concepts/calendar", "# Calendar\n\nBirthday reminders.\n"))
     calls = []
 
-    def fake_embedding_search(vault, query, limit=5, threshold=None):
+    def fake_embedding_search(vault, query, limit=5, threshold=None, pages=None):
         calls.append(query)
         return [{
             "path": "people/example-partner.md",
