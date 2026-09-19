@@ -53,7 +53,10 @@ def test_mcp_memory_write_reports_invalid_revision_format(monkeypatch, tmp_path)
 
     monkeypatch.setattr(mcp_server, "_SERVER_VAULT_PATH", str(tmp_path / "vault"))
     write = _tool_function(mcp_server.memory_write)
-    write("concepts/mcp-format", "# MCP Format\n\nBody.\n")
+    write(
+        "concepts/mcp-format",
+        valid_page_content("concepts/mcp-format", "# MCP Format\n\nBody.\n"),
+    )
     result = write(
         "concepts/mcp-format",
         "# Must Not Persist\n",
@@ -201,7 +204,11 @@ def test_hermes_provider_uses_shared_store_revision(tmp_path):
     provider = mod.ObsidianWikiMemoryProvider({"vault_path": str(tmp_path / "vault"), "access_mode": "direct"})
     provider.initialize(session_id="test")
     created = json.loads(provider.handle_tool_call("obsidian_wiki", {
-        "action": "write", "page": "concepts/provider", "content": "# Provider\n\nShared write path content.\n"
+        "action": "write",
+        "page": "concepts/provider",
+        "content": valid_page_content(
+            "concepts/provider", "# Provider\n\nShared write path content.\n"
+        ),
     }))
     revision = json.loads(provider.handle_tool_call("obsidian_wiki", {
         "action": "read", "page": "concepts/provider"

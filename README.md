@@ -32,7 +32,7 @@ enforces wiki discipline automatically, so the agent cannot let the vault rot.
 - write - create/update page; frontmatter `type`/`updated` derived from
   folder and stamped automatically; log updated in the same call, with the
   root index generated only when missing
-- lint - orphans, broken links, missing frontmatter, stale claims; optional orphan auto-fix
+- lint - orphans, broken links, missing frontmatter, structure, stale claims; optional orphan auto-fix
 - log - recent operation tail
 
 ### LLM-generated index
@@ -796,6 +796,7 @@ possible.
 | `memory_lint` | optional `fix`, `dry_run` | Check wiki health; optionally preview/apply orphan fixes (`dry_run` defaults to true) |
 | `memory_log` | optional `limit` | Return recent operation logs |
 | `memory_write` | `page`, `content`, optional `note`, `expected_revision` | Create or safely update a page; use read-then-write for existing pages |
+| `memory_append` | `page`, `content`, optional `note`, `expected_revision` | Append a validated section to an existing page |
 | `memory_ingest_submit` | optional `request_id`, `session_id` | Queue centralized session capture/extraction |
 | `memory_ingest_status` | optional `job_id` | Inspect an ingest job or recent jobs |
 
@@ -806,10 +807,27 @@ For a new page, call `memory_write` directly:
 ```json
 {
   "page": "concepts/java-conventions",
-  "content": "# Java Conventions\n\nUse constructor injection.\n",
+  "content": "# Java Conventions\n\nUse constructor injection.\n\n## Core Content\n\nPrefer constructor injection for required dependencies.\n\n## Related\n",
   "note": "Durable convention discovered during coding"
 }
 ```
+
+### Page structure validation
+
+Every curated `memory_write` and `memory_append` validates the complete page
+before persisting it. The validator applies universal Markdown rules to every
+page type and type-specific profiles for concepts, decisions, answers,
+entities, people, environments, and preferences. It checks frontmatter, one
+level-one heading, heading hierarchy, duplicate/empty sections, required
+semantic sections, and link syntax. The generated `## Linked from` section is
+excluded from authored-content checks.
+
+Invalid writes return `error: "structure_validation"` with stable issue codes
+such as `missing_h1`, `heading_level_skip`, `duplicate_heading`,
+`empty_section`, `missing_profile_section`, and `missing_related`. The page,
+backlinks, index, and log remain unchanged. `memory_lint` reports the same
+findings for existing legacy pages without rewriting them. Markdown is never
+automatically reformatted.
 
 For an existing page, always use read-then-write:
 

@@ -36,13 +36,6 @@ def _issue(code: str, message: str, line: int | None = None) -> dict[str, Any]:
     return {"code": code, "message": message, "line": line}
 
 
-def _frontmatter_line_count(content: str) -> int:
-    match = FRONTMATTER_RE.match(content)
-    if not match:
-        return 0
-    return match.group(0).count("\n")
-
-
 def scan_headings(body: str) -> list[dict[str, Any]]:
     """Return Markdown headings outside fenced code blocks."""
     headings: list[dict[str, Any]] = []
@@ -81,8 +74,12 @@ def _section_content(body: str, headings: list[dict[str, Any]], index: int) -> s
     return "\n".join(lines[start:end - 1]).strip()
 
 
-def add_frontmatter_issues(meta: dict[str, Any], errors: list[dict[str, Any]]) -> None:
-    for key in REQUIRED_FRONTMATTER:
+def add_frontmatter_issues(
+    meta: dict[str, Any],
+    errors: list[dict[str, Any]],
+    required: tuple[str, ...] = REQUIRED_FRONTMATTER,
+) -> None:
+    for key in required:
         if key not in meta:
             errors.append(_issue("missing_frontmatter", f"missing frontmatter field: {key}"))
     if "updated" in meta and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(meta["updated"]).strip()):
@@ -233,7 +230,8 @@ def validate_page_structure(
     else:
         meta, body = parse_frontmatter(content)
 
-    add_frontmatter_issues(meta, errors)
+    required_frontmatter = ("type", "updated") if page_type == "source" else REQUIRED_FRONTMATTER
+    add_frontmatter_issues(meta, errors, required_frontmatter)
     if meta.get("type") and str(meta["type"]).casefold() != str(page_type).casefold():
         errors.append(_issue(
             "type_mismatch",

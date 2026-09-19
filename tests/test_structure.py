@@ -37,7 +37,7 @@ def test_valid_curated_profiles(page_type, sections):
 
 def test_source_profile_does_not_require_curated_sections():
     result = validate_page_structure(
-        "---\ntype: source\nupdated: 2026-09-19\ntags: []\naliases: []\n---\n\nCaptured source text.\n",
+        "---\ntype: source\nupdated: 2026-09-19\nextract_status: pending\n---\n\nCaptured source text.\n",
         "source",
     )
     assert result["valid"] is True

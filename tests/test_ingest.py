@@ -15,6 +15,7 @@ from tests.support import (
     _call,
     _load_module,
     _load_provider_for_tests,
+    valid_page_content,
 )
 
 class TestSessionExtractReport:
@@ -152,13 +153,21 @@ class TestIngestJobManager:
 
         store = MemoryStore(tmp_path / "vault")
         store.ensure_ready()
-        store.write("concepts/existing", "# Existing\n\nOriginal durable content.\n")
+        store.write(
+            "concepts/existing",
+            valid_page_content("concepts/existing", "# Existing\n\nOriginal durable content.\n"),
+        )
         revision = store.read("concepts/existing")["revision"]
         result = mod.apply_proposals(
             store.vault,
-            [{"page": "concepts/existing", "action": "update", "content": "# Existing\n\nUpdated durable content.\n"}],
+            [{
+                "page": "concepts/existing",
+                "action": "update",
+                "content": valid_page_content(
+                    "concepts/existing", "# Existing\n\nUpdated durable content.\n"
+                ),
+            }],
             store,
         )
         assert result[0]["status"] == "updated"
         assert store.read("concepts/existing")["revision"] != revision
-
