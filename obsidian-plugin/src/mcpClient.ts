@@ -96,7 +96,7 @@ export class McpClient {
     return this.requestId;
   }
 
-  private async request(payload: Record<string, unknown>): Promise<JsonRpcResponse> {
+  private async request(payload: Record<string, unknown>, canRecoverSession = true): Promise<JsonRpcResponse> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     const headers = new Headers({
@@ -114,7 +114,15 @@ export class McpClient {
       });
       const sessionId = response.headers.get("Mcp-Session-Id");
       if (sessionId) this.sessionId = sessionId;
-      if (!response.ok) throw new Error(`MCP request failed (${response.status})`);
+      if (!response.ok) {
+        if (response.status === 404 && canRecoverSession && this.sessionId) {
+          this.sessionId = undefined;
+          this.initialized = false;
+          await this.initialize();
+          return await this.request(payload, false);
+        }
+        throw new Error(`MCP request failed (${response.status})`);
+      }
 
       const body = await response.text();
       const parsed = this.parseResponse(body, response.headers.get("content-type") ?? "");

@@ -70,6 +70,37 @@ describe("McpClient", () => {
     await expect(offlineClient.initialize()).rejects.toThrow("MCP request failed (503)");
   });
 
+  it("reinitializes once when the server rejects a stale session", async () => {
+    const requests: RequestInit[] = [];
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(init ?? {});
+      if (requests.length === 1) {
+        return jsonResponse(
+          { jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-03-26" } },
+          { "Mcp-Session-Id": "old-session" },
+        );
+      }
+      if (requests.length === 2) return new Response("stale session", { status: 404 });
+      if (requests.length === 3) {
+        return jsonResponse(
+          { jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-03-26" } },
+          { "Mcp-Session-Id": "new-session" },
+        );
+      }
+      return jsonResponse({
+        jsonrpc: "2.0",
+        id: 2,
+        result: { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] },
+      });
+    });
+
+    const client = new McpClient("http://localhost/mcp", fetcher);
+    await client.initialize();
+    await expect(client.callTool("memory_search", {})).resolves.toEqual({ ok: true });
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(new Headers(requests[3].headers).get("Mcp-Session-Id")).toBe("new-session");
+  });
+
   it("uses Obsidian's native requestUrl transport by default", async () => {
     vi.mocked(requestUrl).mockResolvedValueOnce({
       status: 200,
