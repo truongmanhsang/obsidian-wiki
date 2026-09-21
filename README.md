@@ -194,6 +194,35 @@ agy mcp add obsidian_wiki \\
 agy mcp list
 ```
 
+## Web UI
+
+The repository also includes a separate React/Vite workspace for searching,
+browsing, reading, and reflecting over the same vault. Start the JSON API and
+frontend in two terminals:
+
+```bash
+# terminal 1: web API
+OBSIDIAN_VAULT_PATH="/absolute/path/to/agent-vault" \
+  .venv/bin/obsidian-memory-web-api --host 127.0.0.1 --port 8787
+
+# terminal 2: frontend
+cd web
+npm install
+npm run dev
+```
+
+Open the Vite URL shown in the terminal. Development requests under `/api` are
+proxied to `127.0.0.1:8787`. To verify a production bundle, run:
+
+```bash
+cd web
+npm test -- --run
+npm run build
+```
+
+The web API is read-only and uses the existing `MemoryStore` and configured
+reflection provider. MCP tool contracts remain unchanged.
+
 ### Verify and use the connection
 
 Restart the client after changing its MCP configuration. Ask it to list or use
