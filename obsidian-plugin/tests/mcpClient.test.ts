@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { requestUrl } from "obsidian";
 import { McpClient } from "../src/mcpClient";
 
 const jsonResponse = (value: unknown, headers: Record<string, string> = {}) =>
@@ -67,5 +68,22 @@ describe("McpClient", () => {
     const httpError = vi.fn().mockResolvedValue(new Response("offline", { status: 503 }));
     const offlineClient = new McpClient("http://localhost/mcp", httpError);
     await expect(offlineClient.initialize()).rejects.toThrow("MCP request failed (503)");
+  });
+
+  it("uses Obsidian's native requestUrl transport by default", async () => {
+    vi.mocked(requestUrl).mockResolvedValueOnce({
+      status: 200,
+      headers: { "mcp-session-id": "native-session" },
+      text: JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
+    } as any);
+
+    const client = new McpClient("http://127.0.0.1:8765/mcp");
+    await client.initialize();
+
+    expect(requestUrl).toHaveBeenCalledWith(expect.objectContaining({
+      url: "http://127.0.0.1:8765/mcp",
+      method: "POST",
+      throw: false,
+    }));
   });
 });

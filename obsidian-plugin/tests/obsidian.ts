@@ -12,6 +12,8 @@ export class Notice {
   constructor(public readonly message: string) {}
 }
 
+export const requestUrl = vi.fn();
+
 export class Plugin {
   app: any;
   registerView = vi.fn();

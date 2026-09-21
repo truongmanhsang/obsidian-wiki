@@ -1,3 +1,5 @@
+import { requestUrl } from "obsidian";
+
 interface JsonRpcResponse {
   jsonrpc?: string;
   id?: number;
@@ -5,7 +7,34 @@ interface JsonRpcResponse {
   error?: { code?: number; message?: string; data?: unknown };
 }
 
-type Fetcher = typeof fetch;
+interface HttpResponse {
+  ok: boolean;
+  status: number;
+  headers: Headers;
+  text(): Promise<string>;
+}
+
+type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<HttpResponse>;
+
+const nativeFetcher: Fetcher = async (input, init) => {
+  const headers: Record<string, string> = {};
+  new Headers(init?.headers).forEach((value, key) => {
+    headers[key] = value;
+  });
+  const response = await requestUrl({
+    url: String(input),
+    method: init?.method,
+    headers,
+    body: typeof init?.body === "string" ? init.body : undefined,
+    throw: false,
+  });
+  return {
+    ok: response.status >= 200 && response.status < 300,
+    status: response.status,
+    headers: new Headers(response.headers),
+    text: async () => response.text,
+  };
+};
 
 export class McpClient {
   private sessionId: string | undefined;
@@ -14,7 +43,7 @@ export class McpClient {
 
   constructor(
     private readonly endpoint: string,
-    private readonly fetcher: Fetcher = fetch,
+    private readonly fetcher: Fetcher = nativeFetcher,
     private readonly timeoutMs = 15_000,
   ) {}
 
