@@ -300,6 +300,13 @@ def hybrid_search(vault, query, limit=5, filters: dict | None = None):
     phrase_paths = {
         result["path"] for result in lexical if result.get("_phrase")
     }
+    if exact_paths:
+        by_path = {
+            path: result
+            for path, result in by_path.items()
+            if path in exact_paths or path in phrase_paths
+        }
+        lexical_scores = {path: result["score"] for path, result in by_path.items()}
     top_lexical = max(lexical_scores.values(), default=0.0)
     # A normalized lexical score is not evidence that the query was answered:
     # a page matching only generic words can still score 1.0.  Unless the
