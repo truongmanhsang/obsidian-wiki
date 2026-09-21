@@ -304,7 +304,14 @@ def hybrid_search(vault, query, limit=5, filters: dict | None = None):
     # A normalized lexical score is not evidence that the query was answered:
     # a page matching only generic words can still score 1.0.  Unless the
     # complete query is an exact title/alias, consult semantic search.
-    if not exact and not phrase_paths:
+    # Search queries with multiple words are treated as explicit phrases. A
+    # semantic fallback for these queries is too permissive: it can return a
+    # merely adjacent page when the requested phrase is absent. Reflection
+    # remains the semantic workflow; Search should stay precise.
+    strict_phrase_query = len(query_tokens(query)) >= 2
+    if strict_phrase_query and not exact and not phrase_paths:
+        return []
+    if not exact and not phrase_paths and not strict_phrase_query:
         vector_results = [
             result for result in _embedding_search(
                 vault,

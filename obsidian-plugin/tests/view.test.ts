@@ -39,7 +39,7 @@ describe("MemoryWorkspaceView", () => {
     input.value = "useful";
     const sources = view.containerEl.querySelector<HTMLInputElement>(".memory-search-sources")!;
     expect(sources).toBeTruthy();
-    expect(sources.checked).toBe(true);
+    expect(sources.checked).toBe(false);
     sources.checked = true;
     view.containerEl.querySelector<HTMLFormElement>(".memory-toolbar")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));

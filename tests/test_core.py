@@ -339,6 +339,9 @@ def test_vietnamese_phrase_search_uses_boundaries_and_can_include_sources(tmp_pa
     assert results[0]["path"] == "sources/sessions/2026/09/partner-birthday.md"
     assert all(row["path"] != "concepts/trading-noise.md" for row in results)
 
+    curated_only = store.search("bạn gái", limit=10, filters={"include_sources": False})["results"]
+    assert curated_only == []
+
 
 def test_provider_schema_and_direct_search_forward_filters(tmp_path):
     provider = _load_provider_for_tests(tmp_path)

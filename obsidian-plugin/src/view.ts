@@ -20,7 +20,7 @@ export class MemoryWorkspaceView extends ItemView {
   private activeTab: "search" | "browse" | "reflect" = "search";
   private root!: HTMLElement;
   private searchQuery = "";
-  private searchFilters: SearchFilters = { include_sources: true };
+  private searchFilters: SearchFilters = { include_sources: false };
 
   constructor(leaf: WorkspaceLeaf, private readonly client: McpClient) {
     super(leaf);
@@ -73,7 +73,7 @@ export class MemoryWorkspaceView extends ItemView {
 
   private renderSearch(panel: HTMLElement): void {
     panel.appendChild(element("h2", "memory-panel-title", "Find a memory"));
-    panel.appendChild(element("p", "memory-panel-copy", "Search curated pages and source sessions across the shared knowledge vault."));
+    panel.appendChild(element("p", "memory-panel-copy", "Search curated pages across the shared knowledge vault."));
     const form = element("form", "memory-toolbar");
     const input = element("input", "memory-search-input") as HTMLInputElement;
     input.type = "search";
@@ -90,7 +90,7 @@ export class MemoryWorkspaceView extends ItemView {
     const sources = element("input", "memory-search-sources") as HTMLInputElement;
     sources.type = "checkbox";
     sources.checked = this.searchFilters.include_sources === true;
-    sourceLabel.append(sources, document.createTextNode(" Include source pages (recommended)"));
+    sourceLabel.append(sources, document.createTextNode(" Include source pages"));
     const button = element("button", "memory-search-submit", "Search");
     button.type = "submit";
     form.append(input, type, path, sourceLabel, button);
