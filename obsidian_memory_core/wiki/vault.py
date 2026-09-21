@@ -1138,6 +1138,13 @@ class WikiVault:
         # alias tokens may be short acronyms ("GR") - match them directly,
         # bypassing the 3-char body-token minimum
         normalized_query = normalize_search(query)
+        def token_count(text: str, token: str) -> int:
+            return len(re.findall(rf"(?<!\w){re.escape(token)}(?!\w)", text))
+
+        def has_phrase(text: str) -> bool:
+            return bool(normalized_query) and bool(
+                re.search(rf"(?<!\w){re.escape(normalized_query)}(?!\w)", text)
+            )
         alias_tokens = [
             a for a in re.findall(r"[^\W_]{2,}", normalized_query, flags=re.UNICODE)
             if a in aliases and a not in STOPWORDS
@@ -1149,13 +1156,15 @@ class WikiVault:
             my_aliases = {
                 normalize_search(a) for a, rel in aliases.items() if rel == page["rel"]
             } - {normalize_search(page["stem"])}
-            title_hits = sum(1 for t in tokens if t in normalize_search(page["stem"]))
+            normalized_stem = normalize_search(page["stem"])
+            normalized_title = normalize_search(page["title"])
+            title_hits = sum(token_count(normalized_stem, t) for t in tokens)
             # exact alias match is a STRONG signal (weight x5 like direct hit)
             title_hits += sum(5 for t in alias_tokens if aliases.get(t) == page["rel"])
             title_hits += sum(
-                1 for t in tokens if any(t in a for a in my_aliases)
+                1 for t in tokens if any(token_count(a, t) for a in my_aliases)
             )
-            body_hits = sum(low.count(t) for t in tokens)
+            body_hits = sum(token_count(low, t) for t in tokens)
             # tags/aliases may be lists (fixed parse_frontmatter) or legacy strings
             tags_val = page["meta"].get("tags", [])
             aliases_val = page["meta"].get("aliases", [])
@@ -1168,24 +1177,26 @@ class WikiVault:
             else:
                 alias_parts = [normalize_search(p) for p in str(aliases_val).replace("[", "").replace("]", "").split(",") if p.strip()]
             tag_text = " ".join(tags_parts) + " " + normalize_search(page["meta"].get("type", "")) + " " + " ".join(alias_parts)
-            tag_hits = sum(1 for t in tokens if t and t in tag_text)
+            tag_hits = sum(1 for t in tokens if t and token_count(tag_text, t))
             score = title_hits * 3 + body_hits + tag_hits * 2
+            phrase_match = has_phrase(normalized_title) or has_phrase(normalized_stem) or has_phrase(low)
+            if phrase_match:
+                score += 20
             if score <= 0:
                 continue
             snippet = ""
             for line in page["body"].splitlines():
                 line_low = normalize_search(line)
-                if any(t in line_low for t in tokens) and len(line.strip()) > 3:
+                if any(token_count(line_low, t) for t in tokens) and len(line.strip()) > 3:
                     snippet = line.strip()[:180]
                     break
             # raw transcripts mention everything repeatedly; divide their
             # score so curated pages always outrank them in recall
             if page["ptype"] == "source":
                 score = score / 10.0
-                if score < 1:
+                if score < 1 and not phrase_match:
                     continue
-            results.append(
-                {
+            result = {
                     "path": page["rel"],
                     "title": page["title"],
                     "type": page["ptype"],
@@ -1193,7 +1204,10 @@ class WikiVault:
                     "score": round(score, 1),
                     "snippet": snippet,
                 }
-            )
+            if phrase_match:
+                result["match"] = "phrase"
+                result["_phrase"] = True
+            results.append(result)
         results.sort(key=lambda r: (-r["score"], r["title"].lower()))
         return results[:limit]
 

@@ -313,6 +313,33 @@ def test_exact_alias_is_marked_and_prioritized(tmp_path):
     assert result["results"][0]["match"] == "exact"
 
 
+def test_vietnamese_phrase_search_uses_boundaries_and_can_include_sources(tmp_path):
+    from obsidian_memory_core import MemoryStore
+
+    store = MemoryStore(tmp_path / "vault")
+    store.ensure_ready()
+    store.write(
+        "concepts/trading-noise",
+        valid_page_content(
+            "concepts/trading-noise",
+            "# Trading Noise\n\nThe balance was banked again after the gain.\n",
+        ),
+    )
+    store.vault.write_page(
+        "sources/sessions/2026/09/partner-birthday.md",
+        "---\n"
+        "type: source\n"
+        "---\n"
+        "# Hỏi ngày sinh bạn gái\n\nNgày sinh bạn gái được nhắc trong cuộc trò chuyện.\n",
+        allow_source=True,
+    )
+
+    results = store.search("bạn gái", limit=10, filters={"include_sources": True})["results"]
+
+    assert results[0]["path"] == "sources/sessions/2026/09/partner-birthday.md"
+    assert all(row["path"] != "concepts/trading-noise.md" for row in results)
+
+
 def test_provider_schema_and_direct_search_forward_filters(tmp_path):
     provider = _load_provider_for_tests(tmp_path)
     provider.initialize(session_id="search-filter-test")

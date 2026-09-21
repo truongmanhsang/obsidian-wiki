@@ -281,7 +281,7 @@ def hybrid_search(vault, query, limit=5, filters: dict | None = None):
             + anchor_score,
             4,
         )
-        if anchor_score:
+        if anchor_score and r.get("match") != "phrase":
             r["match"] = "anchor"
         r.pop('fts_rank', None)
 
@@ -297,11 +297,14 @@ def hybrid_search(vault, query, limit=5, filters: dict | None = None):
             result["_exact"] = True
             result["match"] = "exact"
     exact = bool(exact_paths)
+    phrase_paths = {
+        result["path"] for result in lexical if result.get("_phrase")
+    }
     top_lexical = max(lexical_scores.values(), default=0.0)
     # A normalized lexical score is not evidence that the query was answered:
     # a page matching only generic words can still score 1.0.  Unless the
     # complete query is an exact title/alias, consult semantic search.
-    if not exact:
+    if not exact and not phrase_paths:
         vector_results = [
             result for result in _embedding_search(
                 vault,
@@ -357,4 +360,5 @@ def hybrid_search(vault, query, limit=5, filters: dict | None = None):
     )[:limit]
     for result in results:
         result.pop("_exact", None)
+        result.pop("_phrase", None)
     return results

@@ -16,6 +16,7 @@ export interface SearchHit {
   title?: string;
   score?: number;
   excerpt?: string;
+  snippet?: string;
   [key: string]: unknown;
 }
 

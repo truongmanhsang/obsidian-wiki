@@ -18,6 +18,8 @@
 .memory-toolbar input, .memory-toolbar textarea { flex: 1 1 180px; }
 .memory-toolbar textarea { min-width: 100%; }
 .memory-toolbar button { flex: 0 0 auto; }
+.memory-search-source-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); white-space: nowrap; }
+.memory-search-source-toggle input { flex: 0 0 auto; }
 .memory-results {
   display: grid;
   gap: 10px;

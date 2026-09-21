@@ -37,10 +37,13 @@ describe("MemoryWorkspaceView", () => {
 
     const input = view.containerEl.querySelector<HTMLInputElement>(".memory-search-input")!;
     input.value = "useful";
+    const sources = view.containerEl.querySelector<HTMLInputElement>(".memory-search-sources")!;
+    expect(sources).toBeTruthy();
+    sources.checked = true;
     view.containerEl.querySelector<HTMLFormElement>(".memory-toolbar")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(callTool).toHaveBeenCalledWith("memory_search", expect.objectContaining({ query: "useful" }));
+    expect(callTool).toHaveBeenCalledWith("memory_search", expect.objectContaining({ query: "useful", include_sources: true }));
     expect(view.containerEl.textContent).toContain("concepts/example.md");
   });
 

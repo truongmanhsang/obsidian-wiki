@@ -86,13 +86,22 @@ export class MemoryWorkspaceView extends ItemView {
     const path = element("input", "memory-search-path") as HTMLInputElement;
     path.placeholder = "Path prefix (optional)";
     path.value = this.searchFilters.path_prefix ?? "";
+    const sourceLabel = element("label", "memory-search-source-toggle");
+    const sources = element("input", "memory-search-sources") as HTMLInputElement;
+    sources.type = "checkbox";
+    sources.checked = this.searchFilters.include_sources === true;
+    sourceLabel.append(sources, document.createTextNode(" Include source pages"));
     const button = element("button", "memory-search-submit", "Search");
     button.type = "submit";
-    form.append(input, type, path, button);
+    form.append(input, type, path, sourceLabel, button);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       this.searchQuery = input.value.trim();
-      this.searchFilters = { type: type.value.trim() || undefined, path_prefix: path.value.trim() || undefined };
+      this.searchFilters = {
+        type: type.value.trim() || undefined,
+        path_prefix: path.value.trim() || undefined,
+        include_sources: sources.checked,
+      };
       void this.runSearch(panel);
     });
     panel.appendChild(form);
@@ -128,7 +137,8 @@ export class MemoryWorkspaceView extends ItemView {
     const card = element("article", "memory-card");
     card.appendChild(element("div", "memory-card-path", hit.path));
     if (hit.title) card.appendChild(element("h3", "memory-card-title", hit.title));
-    if (hit.excerpt) card.appendChild(element("p", "memory-card-excerpt", hit.excerpt));
+    const snippet = hit.excerpt ?? hit.snippet;
+    if (snippet) card.appendChild(element("p", "memory-card-excerpt", snippet));
     const open = element("button", "memory-card-open", "Open page");
     const file = this.app.vault.getAbstractFileByPath(hit.path);
     if (!file) {
