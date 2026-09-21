@@ -1,0 +1,19 @@
+{
+  "name": "obsidian-memory-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "obsidian": "latest"
+  },
+  "devDependencies": {
+    "esbuild": "latest",
+    "jsdom": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "id": "obsidian-memory-workspace",
+  "name": "Memory Workspace",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Search and reflect over an Obsidian memory workspace.",
+  "author": "Obsidian Memory",
+  "isDesktopOnly": true
+}
