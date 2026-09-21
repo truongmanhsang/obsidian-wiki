@@ -96,7 +96,10 @@ export class MemoryWorkspaceView extends ItemView {
       void this.runSearch(panel);
     });
     panel.appendChild(form);
-    panel.appendChild(element("div", "memory-results"));
+    const results = element("div", "memory-results");
+    results.setAttribute("role", "region");
+    results.setAttribute("aria-label", "Search results");
+    panel.appendChild(results);
   }
 
   private async runSearch(panel: HTMLElement): Promise<void> {

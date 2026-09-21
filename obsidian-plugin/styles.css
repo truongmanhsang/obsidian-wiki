@@ -18,7 +18,14 @@
 .memory-toolbar input, .memory-toolbar textarea { flex: 1 1 180px; }
 .memory-toolbar textarea { min-width: 100%; }
 .memory-toolbar button { flex: 0 0 auto; }
-.memory-results { display: grid; gap: 10px; }
+.memory-results {
+  display: grid;
+  gap: 10px;
+  max-height: min(60vh, 560px);
+  overflow-y: auto;
+  padding: 2px 8px 2px 2px;
+  overscroll-behavior: contain;
+}
 .memory-card { padding: 16px; border: 1px solid var(--background-modifier-border); border-radius: 12px; background: var(--background-secondary); }
 .memory-card-path, .memory-source, .memory-list-meta { color: var(--text-muted); font-size: 0.82rem; }
 .memory-card-title { margin: 6px 0; }
