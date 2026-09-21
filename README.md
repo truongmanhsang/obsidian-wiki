@@ -223,19 +223,6 @@ npm run build
 The web API is read-only and uses the existing `MemoryStore` and configured
 reflection provider. MCP tool contracts remain unchanged.
 
-To run the API and the built frontend together with Docker Compose, configure
-the host paths used by the MCP service and start the full stack:
-
-```bash
-export OBSIDIAN_VAULT_HOST_PATH="$HOME/path/to/agent-vault"
-export HERMES_STATE_DB_HOST_PATH="$HOME/.hermes/state.db"
-export CODEX_AUTH_HOST_PATH="$HOME/.codex/auth.json"
-docker compose up -d --build
-```
-
-Then open <http://127.0.0.1:5173>. The frontend container serves the compiled
-React app and proxies `/api` requests to the web API on port `8787`.
-
 ### Verify and use the connection
 
 Restart the client after changing its MCP configuration. Ask it to list or use
