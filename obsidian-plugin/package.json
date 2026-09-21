@@ -2,6 +2,7 @@
   "name": "obsidian-memory-workspace",
   "private": true,
   "version": "0.1.0",
+  "type": "module",
   "scripts": {
     "build": "node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs",

@@ -1,0 +1,34 @@
+.memory-workspace {
+  min-height: 100%;
+  padding: 28px clamp(18px, 4vw, 56px);
+  color: var(--text-normal);
+  background: var(--background-primary);
+}
+
+.memory-workspace-header { max-width: 860px; margin: 0 auto 24px; }
+.memory-eyebrow { color: var(--text-muted); font-size: 0.72rem; letter-spacing: 0.16em; }
+.memory-title { margin: 6px 0; font-size: 2rem; }
+.memory-subtitle, .memory-panel-copy { color: var(--text-muted); }
+.memory-tabs { display: flex; gap: 6px; max-width: 860px; margin: 0 auto 18px; border-bottom: 1px solid var(--background-modifier-border); }
+.memory-tab { border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--text-muted); background: transparent; cursor: pointer; }
+.memory-tab.is-active { color: var(--text-normal); border-bottom-color: var(--interactive-accent); }
+.memory-panel { max-width: 860px; margin: 0 auto; }
+.memory-panel-title { margin-bottom: 4px; }
+.memory-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0; }
+.memory-toolbar input, .memory-toolbar textarea { flex: 1 1 180px; }
+.memory-toolbar textarea { min-width: 100%; }
+.memory-toolbar button { flex: 0 0 auto; }
+.memory-results { display: grid; gap: 10px; }
+.memory-card { padding: 16px; border: 1px solid var(--background-modifier-border); border-radius: 12px; background: var(--background-secondary); }
+.memory-card-path, .memory-source, .memory-list-meta { color: var(--text-muted); font-size: 0.82rem; }
+.memory-card-title { margin: 6px 0; }
+.memory-card-excerpt { color: var(--text-muted); white-space: pre-wrap; }
+.memory-card-open { margin-top: 8px; }
+.memory-list-item { display: flex; justify-content: space-between; gap: 16px; width: 100%; text-align: left; }
+.memory-loading, .memory-empty, .memory-error { padding: 24px; color: var(--text-muted); border: 1px dashed var(--background-modifier-border); border-radius: 12px; }
+.memory-error { color: var(--text-error); }
+.memory-error-message { margin-bottom: 10px; }
+.memory-reflection { padding: 18px; border-left: 3px solid var(--interactive-accent); background: var(--background-secondary); white-space: pre-wrap; line-height: 1.6; }
+.memory-sources { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.memory-sources-title { width: 100%; color: var(--text-muted); }
+.memory-source { padding: 4px 8px; border-radius: 999px; background: var(--background-secondary); }
