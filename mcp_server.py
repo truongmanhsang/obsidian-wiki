@@ -98,6 +98,7 @@ def memory_search(
     updated_after: str | None = None,
     path_prefix: str | None = None,
     include_sources: bool = False,
+    precise: bool = False,
 ) -> dict[str, Any]:
     """Search durable project, people, decision, and concept memory."""
     filters = {
@@ -111,7 +112,7 @@ def memory_search(
         }.items()
         if value is not None
     }
-    return _store().search(query, max(1, min(limit, 50)), filters=filters)
+    return _store().search(query, max(1, min(limit, 50)), filters=filters, precise=precise)
 
 
 @mcp.tool()
@@ -121,7 +122,7 @@ def memory_reflect(query: str, limit: int = 8) -> dict[str, Any]:
     if not query:
         return {"error": "reflect requires a query"}
     store = _store()
-    hits = store.search(query, max(1, min(limit, 20))).get("results", [])
+    hits = store.search(query, max(1, min(limit, 20)), precise=False).get("results", [])
     pages = []
     for hit in hits:
         try:

@@ -243,7 +243,7 @@ def _has_exact_curated_match(
     return False
 
 
-def hybrid_search(vault, query, limit=5, filters: dict | None = None):
+def hybrid_search(vault, query, limit=5, filters: dict | None = None, precise: bool = False):
     if not isinstance(query, str) or not query.strip(): return []
     normalized_filters = normalize_search_filters(filters)
     ensure_fresh(vault)
@@ -300,7 +300,7 @@ def hybrid_search(vault, query, limit=5, filters: dict | None = None):
     phrase_paths = {
         result["path"] for result in lexical if result.get("_phrase")
     }
-    if exact_paths:
+    if precise and exact_paths:
         by_path = {
             path: result
             for path, result in by_path.items()
@@ -315,7 +315,7 @@ def hybrid_search(vault, query, limit=5, filters: dict | None = None):
     # semantic fallback for these queries is too permissive: it can return a
     # merely adjacent page when the requested phrase is absent. Reflection
     # remains the semantic workflow; Search should stay precise.
-    strict_phrase_query = len(query_tokens(query)) >= 2
+    strict_phrase_query = precise and len(query_tokens(query)) >= 2
     if strict_phrase_query and not exact and not phrase_paths:
         return []
     if not exact and not phrase_paths and not strict_phrase_query:

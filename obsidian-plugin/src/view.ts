@@ -117,11 +117,12 @@ export class MemoryWorkspaceView extends ItemView {
     results.innerHTML = "";
     results.appendChild(element("div", "memory-loading", "Searching…"));
     try {
-      const response = await this.client.callTool<SearchResult>("memory_search", {
-        query: this.searchQuery,
-        limit: 20,
-        ...Object.fromEntries(Object.entries(this.searchFilters).filter(([, value]) => value !== undefined)),
-      });
+        const response = await this.client.callTool<SearchResult>("memory_search", {
+          query: this.searchQuery,
+          limit: 20,
+          precise: true,
+          ...Object.fromEntries(Object.entries(this.searchFilters).filter(([, value]) => value !== undefined)),
+        });
       results.innerHTML = "";
       if (!response.results?.length) {
         results.appendChild(element("div", "memory-empty", "No matching memories found."));

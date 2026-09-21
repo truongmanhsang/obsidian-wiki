@@ -1211,10 +1211,10 @@ class WikiVault:
         results.sort(key=lambda r: (-r["score"], r["title"].lower()))
         return results[:limit]
 
-    def search(self, query: str, limit: int = 5, filters: dict | None = None) -> list[dict]:
+    def search(self, query: str, limit: int = 5, filters: dict | None = None, precise: bool = False) -> list[dict]:
         """Hybrid FTS5 + keyword + recency search."""
         from .fts import hybrid_search
-        return hybrid_search(self, query, limit=limit, filters=filters)
+        return hybrid_search(self, query, limit=limit, filters=filters, precise=precise)
 
     def rebuild_fts(self) -> dict:
         from .fts import build_fts_db

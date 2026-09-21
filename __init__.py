@@ -790,6 +790,7 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
             query,
             limit=int(args.get("limit", 5)),
             filters=filters,
+            precise=bool(args.get("precise", False)),
         )
         vault.append_log("QUERY", f"search: {query.strip()[:80]}", quiet=True)
         return json.dumps({"results": results, "count": len(results)},
@@ -799,7 +800,7 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
         query = (args.get("query") or "").strip()
         if not query:
             return tool_error("reflect requires 'query'")
-        hits = vault.search(query, limit=min(int(args.get("limit", 8)), 20))
+        hits = vault.search(query, limit=min(int(args.get("limit", 8)), 20), precise=False)
         pages = []
         for hit in hits:
             try:

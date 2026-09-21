@@ -139,8 +139,8 @@ class MemoryStore:
             "revision": revision,
         }
 
-    def search(self, query: str, limit: int = 5, filters: dict | None = None) -> dict[str, Any]:
-        results = self.vault.search(query, limit=limit, filters=filters)
+    def search(self, query: str, limit: int = 5, filters: dict | None = None, precise: bool = False) -> dict[str, Any]:
+        results = self.vault.search(query, limit=limit, filters=filters, precise=precise)
         return {"results": results, "count": len(results)}
 
     def list(self, limit: int = 50) -> dict[str, Any]:
