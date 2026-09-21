@@ -6,10 +6,6 @@ build/
 dist/
 .DS_Store
 
-# Frontend dependencies and build output
-web/node_modules/
-web/dist/
-
 # Local runtime state and logs
 wiki-backlog-state.json
 *.log
