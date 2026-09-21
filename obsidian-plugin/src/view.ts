@@ -1,13 +1,9 @@
-import { ItemView, Notice } from "obsidian";
+import { ItemView } from "obsidian";
 import type { App, WorkspaceLeaf } from "obsidian";
 import type { McpClient } from "./mcpClient";
-import type { MemoryPage, ReflectResult, SearchFilters, SearchHit, SearchResult } from "./types";
+import type { ReflectResult, SearchFilters, SearchHit, SearchResult } from "./types";
 
 export const MEMORY_VIEW_TYPE = "memory-workspace";
-
-interface ListResult {
-  pages?: Array<{ path: string; title?: string; type?: string; updated?: string }>;
-}
 
 const element = <K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -58,7 +54,7 @@ export class MemoryWorkspaceView extends ItemView {
     this.root.appendChild(header);
 
     const tabs = element("nav", "memory-tabs");
-    for (const [tab, label] of [["search", "Search"], ["browse", "Browse"], ["reflect", "Reflect"]] as const) {
+    for (const [tab, label] of [["search", "Search"], ["reflect", "Reflect"]] as const) {
       const button = element("button", `memory-tab ${this.activeTab === tab ? "is-active" : ""}`, label);
       button.dataset.tab = tab;
       button.addEventListener("click", () => {
@@ -72,7 +68,6 @@ export class MemoryWorkspaceView extends ItemView {
     const panel = element("section", "memory-panel");
     this.root.appendChild(panel);
     if (this.activeTab === "search") this.renderSearch(panel);
-    if (this.activeTab === "browse") void this.renderBrowse(panel);
     if (this.activeTab === "reflect") this.renderReflect(panel);
   }
 
@@ -143,31 +138,6 @@ export class MemoryWorkspaceView extends ItemView {
     return card;
   }
 
-  private async renderBrowse(panel: HTMLElement): Promise<void> {
-    panel.appendChild(element("h2", "memory-panel-title", "Browse the vault"));
-    panel.appendChild(element("p", "memory-panel-copy", "Explore the pages currently indexed by memory."));
-    const list = element("div", "memory-results");
-    list.appendChild(element("div", "memory-loading", "Loading catalog…"));
-    panel.appendChild(list);
-    try {
-      const response = await this.client.callTool<ListResult>("memory_list", { limit: 100 });
-      list.innerHTML = "";
-      if (!response.pages?.length) {
-        list.appendChild(element("div", "memory-empty", "No pages found."));
-        return;
-      }
-      response.pages.forEach((page) => {
-        const button = element("button", "memory-list-item");
-        button.appendChild(element("strong", "memory-list-path", page.path));
-        button.appendChild(element("span", "memory-list-meta", [page.type, page.updated].filter(Boolean).join(" · ")));
-        button.addEventListener("click", () => void this.openPage(page.path));
-        list.appendChild(button);
-      });
-    } catch (error) {
-      this.renderError(list, error, () => void this.renderBrowse(panel));
-    }
-  }
-
   private renderReflect(panel: HTMLElement): void {
     panel.appendChild(element("h2", "memory-panel-title", "Reflect across memories"));
     panel.appendChild(element("p", "memory-panel-copy", "Ask a grounded question. Results stay in this workspace and are never saved automatically."));
@@ -219,14 +189,4 @@ export class MemoryWorkspaceView extends ItemView {
     container.appendChild(box);
   }
 
-  private async openPage(path: string): Promise<void> {
-    try {
-      const page = await this.client.callTool<MemoryPage>("memory_read", { page: path });
-      const file = this.app.vault.getAbstractFileByPath(path);
-      if (file) this.app.workspace.openLinkText(path, "", true);
-      else new Notice(`${page.path || path} is not in the current vault`);
-    } catch {
-      new Notice(`Could not read ${path}`);
-    }
-  }
 }

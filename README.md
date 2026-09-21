@@ -196,8 +196,8 @@ agy mcp list
 
 ### Obsidian Memory Workspace plugin
 
-The repository includes a native Obsidian plugin for searching, browsing, and
-reflecting over the same MCP server. Start the Streamable HTTP server first,
+The repository includes a native Obsidian plugin for searching and reflecting
+over the same MCP server. Start the Streamable HTTP server first,
 then build and install the plugin into the target vault:
 
 ```bash
