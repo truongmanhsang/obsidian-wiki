@@ -194,6 +194,29 @@ agy mcp add obsidian_wiki \\
 agy mcp list
 ```
 
+### Obsidian Memory Workspace plugin
+
+The repository includes a native Obsidian plugin for searching, browsing, and
+reflecting over the same MCP server. Start the Streamable HTTP server first,
+then build and install the plugin into the target vault:
+
+```bash
+cd obsidian-plugin
+npm install
+npm run build
+
+VAULT_PATH="/absolute/path/to/agent-vault"
+PLUGIN_DIR="$VAULT_PATH/.obsidian/plugins/obsidian-memory-workspace"
+mkdir -p "$PLUGIN_DIR"
+cp main.js manifest.json styles.css "$PLUGIN_DIR/"
+```
+
+Enable **Memory Workspace** in Obsidian's community plugins settings, then run
+the `Open memory workspace` command. The default endpoint is
+`http://127.0.0.1:8765/mcp`; it can be changed under the plugin settings. The
+plugin is read-only: reflection results stay in the workspace and are not
+saved as notes.
+
 ### Verify and use the connection
 
 Restart the client after changing its MCP configuration. Ask it to list or use
