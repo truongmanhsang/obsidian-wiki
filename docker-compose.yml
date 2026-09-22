@@ -37,5 +37,46 @@ services:
       retries: 3
       start_period: 10s
 
+  obsidian-memory-web:
+    build: .
+    container_name: obsidian-memory-web
+    restart: unless-stopped
+    command:
+      - python
+      - web_api.py
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8787"
+    depends_on:
+      obsidian-memory:
+        condition: service_healthy
+    ports:
+      # Keep the operations workspace local to this machine by default.
+      - "127.0.0.1:8787:8787"
+    environment:
+      - OBSIDIAN_VAULT_PATH=/vault
+      - WIKI_JOB_DB=/data/jobs.db
+      - OBSIDIAN_WIKI_EMBEDDING_MODEL=${OBSIDIAN_WIKI_EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+      - OBSIDIAN_WIKI_EMBEDDING_THRESHOLD=${OBSIDIAN_WIKI_EMBEDDING_THRESHOLD:-0.25}
+      - OBSIDIAN_MEMORY_REFLECT_PROVIDER=${OBSIDIAN_MEMORY_REFLECT_PROVIDER:-hermes}
+      - OBSIDIAN_MEMORY_REFLECT_MODEL=${OBSIDIAN_MEMORY_REFLECT_MODEL:-}
+      - CODEX_AUTH_PATH=/root/.codex/auth.json
+    volumes:
+      # The web process reads the same canonical vault and persisted ingest state.
+      # It exposes no ingest-submit endpoint; the MCP process remains the worker owner.
+      - ${OBSIDIAN_VAULT_HOST_PATH:?Set OBSIDIAN_VAULT_HOST_PATH to the host vault}:/vault
+      - obsidian-memory-data:/data
+      - ${CODEX_AUTH_HOST_PATH:?Set CODEX_AUTH_HOST_PATH to the Codex CLI auth file}:/root/.codex/auth.json:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/api/health', timeout=2).read()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
 volumes:
   obsidian-memory-data:

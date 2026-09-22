@@ -58,6 +58,65 @@ Apply validated orphan fixes explicitly:
 {"action":"lint","fix":true,"dry_run":false}
 ```
 
+## Web workspace
+
+The repository includes a local web workspace for operating and inspecting the
+memory system without going through an MCP client. It provides:
+
+- **Overview** — service health, curated page counts, recent pages, ingest state,
+  and recent vault activity.
+- **Search** — precise or semantic search with page-type filters.
+- **Library** — browse and filter canonical memory pages.
+- **Reflect** — grounded synthesis over retrieved wiki pages with source links.
+- **Operations** — read-only monitoring for persisted ingest jobs and the vault
+  operation log. Ingest submission remains owned by the central MCP/Hermes
+  pipeline so the web process cannot create a competing worker.
+
+Build the frontend and start the local workspace:
+
+```bash
+cd web
+npm install
+npm run build
+cd ..
+
+.venv/bin/python web_api.py --host 127.0.0.1 --port 8787
+```
+
+Open `http://127.0.0.1:8787`. The server uses `OBSIDIAN_VAULT_PATH` by
+default; pass `--vault-path /absolute/path/to/vault` to override it.
+
+For frontend development, keep the web API running on port `8787`, then run:
+
+```bash
+cd web
+npm run dev
+```
+
+Vite proxies `/api` requests to `http://127.0.0.1:8787`.
+
+### Docker Compose
+
+The Compose stack runs the MCP server and web workspace as separate processes
+from the same image. They share the vault and persisted ingest job database,
+while the MCP service remains the only ingest worker owner.
+
+With the existing required paths configured in `.env`, build and start both:
+
+```bash
+docker compose up --build -d
+docker compose ps
+```
+
+Open `http://127.0.0.1:8787` for the web workspace. The MCP HTTP endpoint
+remains at `http://127.0.0.1:8765`. Both ports are loopback-only by default.
+
+To follow the web service logs:
+
+```bash
+docker compose logs -f obsidian-memory-web
+```
+
 ## Config (config.yaml)
 
 ```yaml

@@ -23,3 +23,6 @@ log.db-*
 # Temporary test/build artifacts
 *.tmp
 *.tmp-*
+
+# Web workspace dependencies
+web/node_modules/
