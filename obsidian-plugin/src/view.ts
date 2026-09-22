@@ -16,6 +16,26 @@ const element = <K extends keyof HTMLElementTagNameMap>(
   return node;
 };
 
+const withAttributes = (node: HTMLElement, attributes: Record<string, string>): HTMLElement => {
+  for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
+  return node;
+};
+
+const state = (className: string, text: string): HTMLElement =>
+  withAttributes(element("div", className, text), { role: "status" });
+
+const formatMatch = (match: unknown): string => {
+  const value = String(match ?? "").trim();
+  if (!value) return "";
+  const labels: Record<string, string> = {
+    exact: "Exact match",
+    phrase: "Phrase match",
+    anchor: "Anchor match",
+    embedding: "Semantic match",
+  };
+  return labels[value] ?? value.replace(/[-_]+/g, " ").replace(/\b\w/g, (character) => character.toUpperCase());
+};
+
 export class MemoryWorkspaceView extends ItemView {
   private activeTab: "search" | "browse" | "reflect" = "search";
   private root!: HTMLElement;
@@ -74,7 +94,7 @@ export class MemoryWorkspaceView extends ItemView {
   private renderSearch(panel: HTMLElement): void {
     panel.appendChild(element("h2", "memory-panel-title", "Find a memory"));
     panel.appendChild(element("p", "memory-panel-copy", "Search curated pages across the shared knowledge vault."));
-    const form = element("form", "memory-toolbar");
+    const form = element("form", "memory-toolbar memory-search-toolbar");
     const input = element("input", "memory-search-input") as HTMLInputElement;
     input.type = "search";
     input.placeholder = "Search memories…";
@@ -105,9 +125,15 @@ export class MemoryWorkspaceView extends ItemView {
       void this.runSearch(panel);
     });
     panel.appendChild(form);
+    const count = element("div", "memory-results-count");
+    count.setAttribute("aria-live", "polite");
+    panel.appendChild(count);
     const results = element("div", "memory-results");
-    results.setAttribute("role", "region");
-    results.setAttribute("aria-label", "Search results");
+    withAttributes(results, {
+      role: "region",
+      "aria-label": "Search results",
+      "aria-live": "polite",
+    });
     panel.appendChild(results);
   }
 
@@ -115,17 +141,19 @@ export class MemoryWorkspaceView extends ItemView {
     const results = panel.querySelector<HTMLElement>(".memory-results");
     if (!results) return;
     results.innerHTML = "";
-    results.appendChild(element("div", "memory-loading", "Searching…"));
+    results.appendChild(state("memory-loading", "Searching…"));
     try {
-        const response = await this.client.callTool<SearchResult>("memory_search", {
-          query: this.searchQuery,
-          limit: 20,
-          precise: true,
-          ...Object.fromEntries(Object.entries(this.searchFilters).filter(([, value]) => value !== undefined)),
-        });
+      const response = await this.client.callTool<SearchResult>("memory_search", {
+        query: this.searchQuery,
+        limit: 20,
+        precise: true,
+        ...Object.fromEntries(Object.entries(this.searchFilters).filter(([, value]) => value !== undefined)),
+      });
       results.innerHTML = "";
+      const count = panel.querySelector<HTMLElement>(".memory-results-count");
+      if (count) count.textContent = `${response.results?.length ?? 0} memor${response.results?.length === 1 ? "y" : "ies"}`;
       if (!response.results?.length) {
-        results.appendChild(element("div", "memory-empty", "No matching memories found."));
+        results.appendChild(state("memory-empty", "No matching memories found."));
         return;
       }
       response.results.forEach((hit) => results.appendChild(this.renderHit(hit)));
@@ -138,6 +166,15 @@ export class MemoryWorkspaceView extends ItemView {
     const card = element("article", "memory-card");
     card.appendChild(element("div", "memory-card-path", hit.path));
     if (hit.title) card.appendChild(element("h3", "memory-card-title", hit.title));
+    if (hit.match || typeof hit.score === "number") {
+      const meta = element("div", "memory-card-meta");
+      const match = formatMatch(hit.match);
+      if (match) meta.appendChild(element("span", "memory-match-badge", match));
+      if (typeof hit.score === "number") {
+        meta.appendChild(element("span", "memory-score", `${Math.round(hit.score * 100)}% match`));
+      }
+      card.appendChild(meta);
+    }
     const snippet = hit.excerpt ?? hit.snippet;
     if (snippet) card.appendChild(element("p", "memory-card-excerpt", snippet));
     const open = element("button", "memory-card-open", "Open page");
@@ -162,7 +199,11 @@ export class MemoryWorkspaceView extends ItemView {
     const button = element("button", "memory-reflect-submit", "Reflect");
     button.type = "submit";
     form.append(input, button);
-    const output = element("div", "memory-reflect-output");
+    const output = withAttributes(element("div", "memory-reflect-output"), {
+      role: "region",
+      "aria-label": "Reflection result",
+      "aria-live": "polite",
+    });
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       void this.runReflect(input.value.trim(), output);
@@ -173,17 +214,17 @@ export class MemoryWorkspaceView extends ItemView {
   private async runReflect(query: string, output: HTMLElement): Promise<void> {
     output.innerHTML = "";
     if (!query) {
-      output.appendChild(element("div", "memory-empty", "Enter a question to reflect."));
+      output.appendChild(state("memory-empty", "Enter a question to reflect."));
       return;
     }
-    output.appendChild(element("div", "memory-loading", "Reflecting…"));
+    output.appendChild(state("memory-loading", "Reflecting…"));
     try {
       const response = await this.client.callTool<ReflectResult>("memory_reflect", { query, limit: 8 });
       output.innerHTML = "";
       if (response.error) throw new Error(response.message || response.error);
-      output.appendChild(element("div", "memory-reflection", response.reflection || "No reflection returned."));
+      output.appendChild(element("div", "memory-reflection-card", response.reflection || "No reflection returned."));
       if (response.sources?.length) {
-        const sources = element("div", "memory-sources");
+        const sources = element("div", "memory-sources-list");
         sources.appendChild(element("div", "memory-sources-title", "Sources"));
         response.sources.forEach((source) => sources.appendChild(element("span", "memory-source", source.path)));
         output.appendChild(sources);
@@ -195,7 +236,7 @@ export class MemoryWorkspaceView extends ItemView {
 
   private renderError(container: HTMLElement, error: unknown, retry: () => void): void {
     container.innerHTML = "";
-    const box = element("div", "memory-error");
+    const box = withAttributes(element("div", "memory-error"), { role: "alert" });
     box.appendChild(element("div", "memory-error-message", error instanceof Error ? error.message : "Memory request failed"));
     const button = element("button", "memory-retry", "Retry");
     button.addEventListener("click", retry);
