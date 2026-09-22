@@ -181,6 +181,7 @@ def test_fts_search_matches_metadata_in_search_projection(tmp_path):
 
     assert result["results"]
     assert result["results"][0]["path"] == "entities/metadata-only.md"
+    assert result["results"][0]["match"] != "embedding"
 
 
 def test_search_filter_normalization_and_page_matching():
@@ -419,6 +420,15 @@ def test_query_features_are_derived_from_page_text_not_domain_vocabulary():
     assert "partner birth date" in features.get("phrases", [])
     assert "birth date" in features.get("phrases", [])
     assert "relation" not in features
+
+
+def test_default_embedding_index_is_multilingual_and_uses_model_calibrated_threshold():
+    import obsidian_memory_core.wiki.fts as fts
+
+    assert fts._EMBEDDING_MODEL == (
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    )
+    assert fts._EMBEDDING_THRESHOLD == 0.25
 
 
 def test_vietnamese_relationship_attribute_query_finds_curated_person_page(

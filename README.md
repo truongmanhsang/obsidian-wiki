@@ -625,9 +625,22 @@ MCP adapter.
 Configuration is available through environment variables:
 
 ```bash
-OBSIDIAN_WIKI_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
-OBSIDIAN_WIKI_EMBEDDING_THRESHOLD=0.55
+OBSIDIAN_WIKI_EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+OBSIDIAN_WIKI_EMBEDDING_THRESHOLD=0.25
 ```
+
+The default index model is multilingual (~50 languages), including
+Vietnamese, and keeps 384-dimensional vectors for a small local cache. The
+threshold is calibrated for this model's cosine-score range. Changing the
+model automatically rebuilds only the affected page vectors because each
+cached row is keyed by both content hash and model name; the SQLite FTS5
+lexical index remains intact. The first search after a model change may spend
+time downloading the model and embedding existing pages.
+
+During hybrid merging, semantic fallback can improve a lexical candidate but
+cannot demote a stronger lexical or metadata match. This keeps exact
+`search_terms`, aliases, and title/body matches ahead of a merely similar
+embedding result.
 
 The first semantic fallback downloads the model into fastembed's cache. If the
 dependency or model is unavailable, search safely returns the normal empty

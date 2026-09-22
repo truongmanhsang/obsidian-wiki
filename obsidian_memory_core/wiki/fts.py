@@ -20,8 +20,17 @@ from obsidian_memory_core.db.models import EmbeddingPage, FtsMeta, FtsPage
 from sqlalchemy import create_engine, delete, event, func, literal_column, select
 from sqlalchemy.orm import Session
 
-_EMBEDDING_MODEL = os.environ.get("OBSIDIAN_WIKI_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
-_EMBEDDING_THRESHOLD = float(os.environ.get("OBSIDIAN_WIKI_EMBEDDING_THRESHOLD", "0.55"))
+# The previous default was English-only, which made semantic fallback weak for
+# Vietnamese queries. Keep the model configurable, but default to the small
+# multilingual model so the 384-dimension cache stays compact and fast.
+_EMBEDDING_MODEL = os.environ.get(
+    "OBSIDIAN_WIKI_EMBEDDING_MODEL",
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+)
+# Similarity scores are model-dependent. The multilingual MiniLM model has a
+# lower cosine-score range than bge-small, so its default threshold is tuned
+# separately while remaining overrideable for a different model.
+_EMBEDDING_THRESHOLD = float(os.environ.get("OBSIDIAN_WIKI_EMBEDDING_THRESHOLD", "0.25"))
 _EMBEDDER = None
 _EMBEDDER_FAILED = False
 
@@ -333,12 +342,20 @@ def hybrid_search(vault, query, limit=5, filters: dict | None = None, precise: b
             if path in by_path:
                 # Similarity is the strongest signal, while retaining a small
                 # lexical/recency tie-breaker for otherwise equal candidates.
-                by_path[path].update(vector)
-                by_path[path]['score'] = round(0.8 * vector['score'] + 0.2 * lexical_scores.get(path, 0.0), 4)
-                # Keep the semantic provenance visible to callers.  A merged
-                # lexical hit is still primarily an embedding match when the
-                # vector result supplied the winning candidate.
-                by_path[path]['match'] = 'embedding'
+                lexical_score = lexical_scores.get(path, 0.0)
+                semantic_score = 0.8 * vector['score'] + 0.2 * lexical_score
+                # Semantic fallback must never demote a page that already has
+                # a stronger lexical/metadata match. This matters for fields
+                # such as search_terms, where the page can be highly relevant
+                # even though its body has little semantic text.
+                if semantic_score > lexical_score:
+                    by_path[path].update(vector)
+                    by_path[path]['score'] = round(semantic_score, 4)
+                    # Keep the semantic provenance visible only when it
+                    # actually wins the merge.
+                    by_path[path]['match'] = 'embedding'
+                else:
+                    by_path[path]['score'] = round(lexical_score, 4)
             else:
                 by_path[path] = dict(vector)
 

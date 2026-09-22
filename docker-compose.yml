@@ -11,6 +11,9 @@ services:
       - OBSIDIAN_VAULT_PATH=/vault
       # Internal path for the job queue SQLite database
       - WIKI_JOB_DB=/data/jobs.db
+      # Multilingual semantic index; override in .env for a different model.
+      - OBSIDIAN_WIKI_EMBEDDING_MODEL=${OBSIDIAN_WIKI_EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+      - OBSIDIAN_WIKI_EMBEDDING_THRESHOLD=${OBSIDIAN_WIKI_EMBEDDING_THRESHOLD:-0.25}
       # Reflection uses the existing Codex CLI OAuth session when selected.
       - OBSIDIAN_MEMORY_REFLECT_PROVIDER=${OBSIDIAN_MEMORY_REFLECT_PROVIDER:-hermes}
       - OBSIDIAN_MEMORY_REFLECT_MODEL=${OBSIDIAN_MEMORY_REFLECT_MODEL:-}
