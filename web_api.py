@@ -95,6 +95,10 @@ async def search_endpoint(request: Request) -> JSONResponse:
     )
 
 
+async def graph_endpoint(request: Request) -> JSONResponse:
+    return JSONResponse(_store(request).graph())
+
+
 async def pages_endpoint(request: Request) -> JSONResponse:
     try:
         limit = _limit(request.query_params.get("limit"), 25, 100)
@@ -204,6 +208,7 @@ def create_web_app(vault_path: str | None = None) -> Starlette:
         Route("/api/health", health_endpoint, methods=["GET"]),
         Route("/api/search", search_endpoint, methods=["GET"]),
         Route("/api/pages", pages_endpoint, methods=["GET"]),
+        Route("/api/graph", graph_endpoint, methods=["GET"]),
         Route("/api/resolve", resolve_page_endpoint, methods=["GET"]),
         Route("/api/pages/{page_path:path}", page_endpoint, methods=["GET"]),
         Route("/api/reflect", reflect_endpoint, methods=["POST"]),

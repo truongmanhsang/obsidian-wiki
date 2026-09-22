@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import {
   Activity,
   Database,
   LibraryBig,
   Moon,
+  Network,
   Search,
   Sparkles,
   Sun,
@@ -16,12 +17,15 @@ import { PageView } from './components/PageView'
 import { ReflectView } from './components/ReflectView'
 import { SearchView } from './components/SearchView'
 
-export type View = 'overview' | 'search' | 'library' | 'reflect' | 'operations' | 'page'
+const GraphView = lazy(() => import('./components/GraphView').then(module => ({ default: module.GraphView })))
+
+export type View = 'overview' | 'search' | 'library' | 'graph' | 'reflect' | 'operations' | 'page'
 
 const navigation: Array<{ id: Exclude<View, 'page'>; label: string; icon: typeof Search }> = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'search', label: 'Search', icon: Search },
   { id: 'library', label: 'Library', icon: LibraryBig },
+  { id: 'graph', label: 'Graph', icon: Network },
   { id: 'reflect', label: 'Reflect', icon: Sparkles },
   { id: 'operations', label: 'Operations', icon: Activity },
 ]
@@ -30,6 +34,7 @@ const titles: Record<Exclude<View, 'page'>, string> = {
   overview: 'Overview',
   search: 'Search',
   library: 'Library',
+  graph: 'Graph',
   reflect: 'Reflect',
   operations: 'Operations',
 }
@@ -146,6 +151,10 @@ export default function App() {
               <OverviewView onNavigate={navigate} onOpenPage={path => openPage(path, 'overview')} />
             ) : view === 'library' ? (
               <BrowseView onOpenPage={path => openPage(path, 'library')} />
+            ) : view === 'graph' ? (
+              <Suspense fallback={<div className="loading-state">Loading graph…</div>}>
+                <GraphView onOpenPage={path => openPage(path, 'graph')} />
+              </Suspense>
             ) : view === 'reflect' ? (
               <ReflectView
                 initialQuery={reflectQuery}

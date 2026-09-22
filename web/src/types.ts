@@ -28,6 +28,27 @@ export type PageListResponse = {
   limit: number
 }
 
+export type GraphNode = {
+  id: string
+  path: string
+  title: string
+  type: PageType
+  updated: string
+  tags: string[]
+}
+
+export type GraphLink = {
+  source: string
+  target: string
+  weight: number
+}
+
+export type GraphResponse = {
+  nodes: GraphNode[]
+  links: GraphLink[]
+  count: { nodes: number; links: number }
+}
+
 export type MemoryPageDetail = {
   path: string
   content: string

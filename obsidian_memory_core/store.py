@@ -42,6 +42,7 @@ def _unlock_file(fh: Any) -> None:
 _REVISION_PATTERN = re.compile(r"[0-9a-f]{64}")
 from .wiki import (
     DIR_TYPES,
+    WIKILINK_RE,
     StructureValidationError,
     WikiVault,
     WikiVaultError,
@@ -237,6 +238,89 @@ class MemoryStore:
                 {"path": p["rel"], "title": p["title"], "type": p["ptype"], "updated": p["updated"]}
                 for p in page_slice
             ],
+        }
+
+    def graph(self) -> dict[str, Any]:
+        """Return the vault link graph with canonical page IDs.
+
+        The payload intentionally includes source pages; Graph View settings
+        decide whether to hide them without requiring another API round trip.
+        Ambiguous wikilinks are omitted rather than connected to the wrong node.
+        """
+        pages = self.vault.load_pages()
+        nodes = [
+            {
+                "id": str(page["rel"]),
+                "path": str(page["rel"]),
+                "title": str(page.get("title", "") or page["stem"]),
+                "type": str(page.get("ptype", "") or "unknown"),
+                "updated": str(page.get("updated", "") or ""),
+                "tags": [str(tag) for tag in (page.get("meta", {}).get("tags") or [])]
+                if isinstance(page.get("meta", {}).get("tags"), list)
+                else [],
+            }
+            for page in pages
+        ]
+
+        by_path: dict[str, str] = {}
+        by_name: dict[str, set[str]] = {}
+
+        def add_name(value: Any, rel: str) -> None:
+            key = str(value or "").strip().casefold()
+            if not key:
+                return
+            by_name.setdefault(key, set()).add(rel)
+
+        for page in pages:
+            rel = str(page["rel"])
+            rel_no_ext = rel[:-3] if rel.casefold().endswith(".md") else rel
+            by_path[rel_no_ext.casefold()] = rel
+            add_name(page.get("stem"), rel)
+            add_name(page.get("title"), rel)
+            aliases = page.get("meta", {}).get("aliases", [])
+            if isinstance(aliases, list):
+                for alias in aliases:
+                    add_name(alias, rel)
+
+        edges: dict[tuple[str, str], int] = {}
+        for page in pages:
+            source = str(page["rel"])
+            source_dir = source.rsplit("/", 1)[0].casefold() if "/" in source else ""
+            for raw_target in WIKILINK_RE.findall(str(page.get("text", ""))):
+                target = str(raw_target or "").strip().replace("\\", "/")
+                if target.casefold().endswith(".md"):
+                    target = target[:-3]
+                target_key = target.strip("/").casefold()
+                if not target_key:
+                    continue
+
+                resolved = by_path.get(target_key)
+                if resolved is None and source_dir:
+                    resolved = by_path.get(f"{source_dir}/{target_key}")
+                if resolved is None:
+                    candidates = by_name.get(target_key, set())
+                    if len(candidates) == 1:
+                        resolved = next(iter(candidates))
+                if resolved is None and "/" in target_key:
+                    candidates = by_name.get(target_key.rsplit("/", 1)[-1], set())
+                    if len(candidates) == 1:
+                        resolved = next(iter(candidates))
+                if not resolved or resolved == source:
+                    continue
+
+                # Render as an undirected knowledge connection. Reciprocal links
+                # increment weight instead of producing duplicate canvas lines.
+                edge_key = tuple(sorted((source, resolved), key=str.casefold))
+                edges[edge_key] = edges.get(edge_key, 0) + 1
+
+        links = [
+            {"source": source, "target": target, "weight": weight}
+            for (source, target), weight in sorted(edges.items())
+        ]
+        return {
+            "nodes": nodes,
+            "links": links,
+            "count": {"nodes": len(nodes), "links": len(links)},
         }
 
     def lint(self) -> dict[str, Any]:

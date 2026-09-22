@@ -85,6 +85,7 @@ describe('Memory workspace shell', () => {
     expect(nav.getByRole('button', { name: 'Overview' })).toBeInTheDocument()
     expect(nav.getByRole('button', { name: 'Search' })).toBeInTheDocument()
     expect(nav.getByRole('button', { name: 'Library' })).toBeInTheDocument()
+    expect(nav.getByRole('button', { name: 'Graph' })).toBeInTheDocument()
     expect(nav.getByRole('button', { name: 'Reflect' })).toBeInTheDocument()
     expect(nav.getByRole('button', { name: 'Operations' })).toBeInTheDocument()
     expect(await screen.findByText('Recently updated')).toBeVisible()

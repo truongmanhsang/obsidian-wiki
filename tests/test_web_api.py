@@ -86,6 +86,18 @@ def test_health_endpoint_reports_total_page_count(client):
     assert response.json()["pages"] == 4
 
 
+def test_graph_endpoint_returns_vault_nodes(client):
+    response = client.get("/api/graph")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"]["nodes"] == 4
+    assert len(payload["nodes"]) == 4
+    assert isinstance(payload["links"], list)
+    assert {node["type"] for node in payload["nodes"]} == {"person", "concept", "answer", "preference"}
+    assert all({"id", "path", "title", "type", "updated", "tags"} <= set(node) for node in payload["nodes"])
+
+
 def test_logs_endpoint_returns_recent_vault_activity(client):
     response = client.get("/api/logs?limit=10")
 

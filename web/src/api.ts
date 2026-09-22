@@ -1,5 +1,6 @@
 import {
   ApiError,
+  type GraphResponse,
   type HealthResponse,
   type IngestJob,
   type IngestStatus,
@@ -54,6 +55,10 @@ export function listPages(params: {
   if (params.type && params.type !== 'all') search.set('type', params.type)
   if (params.query?.trim()) search.set('q', params.query.trim())
   return request<PageListResponse>(`/api/pages?${search.toString()}`)
+}
+
+export function getGraph(): Promise<GraphResponse> {
+  return request<GraphResponse>('/api/graph')
 }
 
 export function resolveWikiLink(target: string, fromPath: string): Promise<{ path: string; fragment: string }> {
