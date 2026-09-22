@@ -125,17 +125,18 @@
 .memory-tab:focus-visible,
 .memory-card-open:focus-visible,
 .memory-retry:focus-visible {
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--interactive-accent);
 }
 
-.memory-search-input:focus,
-.memory-search-type:focus,
-.memory-search-path:focus,
-.memory-reflect-input:focus {
+.memory-toolbar input:focus,
+.memory-toolbar textarea:focus,
+.memory-tab:focus,
+.memory-card-open:focus,
+.memory-retry:focus {
+  outline: none;
   border-color: var(--interactive-accent);
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: -1px;
+  box-shadow: 0 0 0 2px var(--interactive-accent);
 }
 
 .memory-search-source-toggle {
