@@ -47,6 +47,7 @@ from .wiki import (
     WikiVaultError,
 )
 from .wiki.structure import validate_page_structure
+from .wiki.log import _iter_log_rows
 
 
 class MemoryWriteError(WikiVaultError):
@@ -247,7 +248,20 @@ class MemoryStore:
             return self.vault.fix_orphans(dry_run=dry_run)
 
     def log(self, limit: int = 30) -> dict[str, Any]:
-        return {"log_tail": self.vault.log_tail(limit)}
+        rows = _iter_log_rows(self.vault)[-limit:]
+        return {
+            "log_tail": self.vault.log_tail(limit),
+            "entries": [
+                {
+                    "date": date_value,
+                    "kind": kind,
+                    "message": message,
+                    "is_auto": bool(is_auto),
+                    "created_at": created_at,
+                }
+                for date_value, kind, message, is_auto, created_at in rows
+            ],
+        }
 
     def write(self, page: str, content: str, note: str = "", expected_revision: str | None = None, allow_duplicate: bool = False) -> dict[str, Any]:
         if not isinstance(page, str) or not page.strip():

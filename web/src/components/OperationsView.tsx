@@ -9,6 +9,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import { getIngestStatus, getLogs } from '../api'
+import { logLines } from '../logFormat'
 import type { IngestJob } from '../types'
 import { ErrorBanner } from './ErrorBanner'
 
@@ -55,7 +56,7 @@ export function OperationsView() {
       } else {
         setJobs([status])
       }
-      setLogs(logResult.log_tail.split('\n').filter(Boolean).reverse())
+      setLogs(logLines(logResult))
       setError(null)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Operations data is unavailable')

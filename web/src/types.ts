@@ -71,8 +71,17 @@ export type IngestStatus = {
   jobs: IngestJob[]
 }
 
+export type LogEntry = {
+  date: string
+  kind: string
+  message: string
+  is_auto: boolean
+  created_at?: string
+}
+
 export type LogResponse = {
   log_tail: string
+  entries?: LogEntry[]
 }
 
 export class ApiError extends Error {

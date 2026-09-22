@@ -90,8 +90,12 @@ def test_logs_endpoint_returns_recent_vault_activity(client):
     response = client.get("/api/logs?limit=10")
 
     assert response.status_code == 200
-    assert "log_tail" in response.json()
-    assert "WRITE" in response.json()["log_tail"]
+    payload = response.json()
+    assert "log_tail" in payload
+    assert "WRITE" in payload["log_tail"]
+    assert payload["entries"]
+    assert payload["entries"][-1]["created_at"]
+    assert payload["entries"][-1]["kind"] == "WRITE"
 
 
 def test_ingest_status_endpoint_is_read_only_and_empty_by_default(client):

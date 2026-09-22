@@ -11,6 +11,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { getHealth, getIngestStatus, getLogs, listPages } from '../api'
+import { logLines } from '../logFormat'
 import type { IngestJob, MemoryPage } from '../types'
 import type { View } from '../App'
 import { ErrorBanner } from './ErrorBanner'
@@ -61,7 +62,7 @@ export function OverviewView({
       setStats(catalog.stats ?? {})
       setOnline(Boolean(health?.ok))
       setJobs('jobs' in ingest ? (ingest.jobs ?? []) : [ingest])
-      setLogs(logResult.log_tail.split('\n').filter(Boolean).reverse())
+      setLogs(logLines(logResult))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Workspace status is unavailable')
     } finally {
