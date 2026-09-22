@@ -97,7 +97,7 @@
 
 .memory-search-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(130px, 0.36fr) minmax(150px, 0.46fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--memory-gap);
   align-items: center;
 }

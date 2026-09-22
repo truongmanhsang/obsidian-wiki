@@ -100,12 +100,6 @@ export class MemoryWorkspaceView extends ItemView {
     input.placeholder = "Search memories…";
     input.value = this.searchQuery;
     input.setAttribute("aria-label", "Search memories");
-    const type = element("input", "memory-search-type") as HTMLInputElement;
-    type.placeholder = "Type (optional)";
-    type.value = this.searchFilters.type ?? "";
-    const path = element("input", "memory-search-path") as HTMLInputElement;
-    path.placeholder = "Path prefix (optional)";
-    path.value = this.searchFilters.path_prefix ?? "";
     const sourceLabel = element("label", "memory-search-source-toggle");
     const sources = element("input", "memory-search-sources") as HTMLInputElement;
     sources.type = "checkbox";
@@ -113,13 +107,11 @@ export class MemoryWorkspaceView extends ItemView {
     sourceLabel.append(sources, document.createTextNode(" Include source pages"));
     const button = element("button", "memory-search-submit", "Search");
     button.type = "submit";
-    form.append(input, type, path, sourceLabel, button);
+    form.append(input, sourceLabel, button);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       this.searchQuery = input.value.trim();
       this.searchFilters = {
-        type: type.value.trim() || undefined,
-        path_prefix: path.value.trim() || undefined,
         include_sources: sources.checked,
       };
       void this.runSearch(panel);
