@@ -1,5 +1,6 @@
 services:
   obsidian-memory:
+    image: obsidian-memory:local
     build: .
     container_name: obsidian-memory
     restart: unless-stopped
@@ -36,7 +37,7 @@ services:
       start_period: 10s
 
   obsidian-memory-web:
-    build: .
+    image: obsidian-memory:local
     container_name: obsidian-memory-web
     restart: unless-stopped
     command:

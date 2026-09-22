@@ -132,33 +132,38 @@ export default function App() {
         </header>
 
         <section className="content-column">
-          {view === 'page' && pagePath ? (
-            <PageView
-              path={pagePath}
-              onBack={() => setView(returnView === 'page' ? 'search' : returnView)}
-              onOpenPage={setPagePath}
-            />
-          ) : view === 'overview' ? (
-            <OverviewView onNavigate={navigate} onOpenPage={path => openPage(path, 'overview')} />
-          ) : view === 'library' ? (
-            <BrowseView onOpenPage={path => openPage(path, 'library')} />
-          ) : view === 'reflect' ? (
-            <ReflectView
-              initialQuery={reflectQuery}
-              onOpenPage={path => openPage(path, 'reflect')}
-            />
-          ) : view === 'operations' ? (
-            <OperationsView />
-          ) : (
-            <SearchView
-              inputRef={searchRef}
-              onOpenPage={path => openPage(path, 'search')}
-              onReflect={query => {
-                setReflectQuery(query)
-                setView('reflect')
-              }}
-            />
-          )}
+          <div
+            className="view-stage"
+            key={view === 'page' ? `page:${pagePath ?? ''}` : view}
+          >
+            {view === 'page' && pagePath ? (
+              <PageView
+                path={pagePath}
+                onBack={() => setView(returnView === 'page' ? 'search' : returnView)}
+                onOpenPage={setPagePath}
+              />
+            ) : view === 'overview' ? (
+              <OverviewView onNavigate={navigate} onOpenPage={path => openPage(path, 'overview')} />
+            ) : view === 'library' ? (
+              <BrowseView onOpenPage={path => openPage(path, 'library')} />
+            ) : view === 'reflect' ? (
+              <ReflectView
+                initialQuery={reflectQuery}
+                onOpenPage={path => openPage(path, 'reflect')}
+              />
+            ) : view === 'operations' ? (
+              <OperationsView />
+            ) : (
+              <SearchView
+                inputRef={searchRef}
+                onOpenPage={path => openPage(path, 'search')}
+                onReflect={query => {
+                  setReflectQuery(query)
+                  setView('reflect')
+                }}
+              />
+            )}
+          </div>
         </section>
       </main>
     </div>
