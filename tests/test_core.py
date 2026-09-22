@@ -3,6 +3,7 @@
 import asyncio
 import importlib.util
 import json
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -1026,6 +1027,26 @@ class TestWritePath:
                 "## New Finding\n\nAppended content.\n",
                 expected_revision=page["revision"],
             )
+
+    def test_auto_backlinks_stay_before_final_related_section(self, provider):
+        _call(provider, action="write", page="concepts/related-neighbor",
+              content="# Related Neighbor\n\nNeighbor content.\n")
+        _call(provider, action="write", page="concepts/backlink-target",
+              content=(
+                  "# Backlink Target\n\nTarget content.\n\n"
+                  "## Core Content\n\nTarget details.\n\n"
+                  "## Related\n\n- [[concepts/related-neighbor|Related Neighbor]]\n"
+              ))
+        _call(provider, action="write", page="entities/backlink-source",
+              content="# Backlink Source\n\nLinks to [[concepts/backlink-target]].\n")
+
+        target = _call(provider, action="read", page="concepts/backlink-target")["content"]
+        assert "## Linked from" in target
+        assert target.index("## Linked from") < target.index("## Related")
+        h2 = re.findall(r"(?m)^##\s+(.+?)\s*$", target)
+        assert h2[-1] == "Related"
+        related = target.split("## Related", 1)[1]
+        assert "[[concepts/related-neighbor|Related Neighbor]]" in related
 
     def test_append_preserves_content_when_page_has_auto_backlinks(self, provider):
         _call(provider, action="write", page="concepts/append-with-backlinks",

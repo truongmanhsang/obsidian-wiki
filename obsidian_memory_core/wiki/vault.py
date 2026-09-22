@@ -805,32 +805,38 @@ class WikiVault:
                 stem = target_path.stem
                 inbound = sorted(self._inbound_links(stem))
                 header = "## Linked from"
-                # strip previous auto backlink section from BODY ONLY to preserve frontmatter
-                if f"\n{header}" in body:
-                    idx = body.index(f"\n{header}")
-                    body = body[:idx].rstrip() + "\n"
-                elif body.lstrip().startswith(header):
-                    h_idx = body.find(header)
-                    body = body[:h_idx].rstrip() + "\n"
+                # Strip only the generated backlink section. Historically it
+                # was always last, so the old implementation truncated
+                # everything after it. Related is now the required final
+                # editorial section, therefore preserve all following H2s.
+                original_body = body
+                body = re.sub(
+                    r"(?ms)(?:^|\n)## Linked from\s*\n.*?(?=\n## |\Z)",
+                    "\n",
+                    body,
+                    count=1,
+                ).strip("\n") + "\n"
                 if not inbound:
-                    # No inbound: remove previous backlink section if it existed, preserve frontmatter
-                    if f"\n{header}" in raw or header in raw:
-                        if fm_text:
-                            _atomic_write_text(target_path, fm_text + body)
-                        else:
-                            _atomic_write_text(target_path, body)
+                    if body != original_body:
+                        _atomic_write_text(target_path, (fm_text + body) if fm_text else body)
                     return
+
                 lines = [header, ""]
                 for src_rel in inbound:
                     title = src_rel.split("/")[-1].removesuffix(".md")
                     lines.append(f"- [[{src_rel}|{title}]]")
-                if not body.endswith("\n"):
-                    body += "\n"
-                new_body = body + "\n" + "\n".join(lines) + "\n"
-                if fm_text:
-                    _atomic_write_text(target_path, fm_text + new_body)
+                backlink_block = "\n".join(lines)
+
+                # Keep generated navigation immediately BEFORE Related so
+                # every curated page can end with its editorial Related block.
+                related = re.search(r"(?m)^## Related\s*$", body)
+                if related:
+                    prefix = body[:related.start()].rstrip()
+                    suffix = body[related.start():].strip("\n")
+                    new_body = f"{prefix}\n\n{backlink_block}\n\n{suffix}\n"
                 else:
-                    _atomic_write_text(target_path, new_body)
+                    new_body = body.rstrip() + "\n\n" + backlink_block + "\n"
+                _atomic_write_text(target_path, (fm_text + new_body) if fm_text else new_body)
 
             _refresh_backlinks(path)
             # resolve linked stems against ALL pages (any folder), then
@@ -915,7 +921,7 @@ class WikiVault:
             if page["ptype"] == "source":
                 continue  # transcripts quote links; they are not endorsements
             body_text = re.sub(
-                r"\n## Linked from\n(?:\n|- .*\n?)*", "\n", page["text"]
+                r"(?ms)(?:^|\n)## Linked from\s*\n.*?(?=\n## |\Z)", "\n", page["text"]
             )
             for link in WIKILINK_RE.findall(body_text):
                 link_stem = link.strip().split("/")[-1].strip()
@@ -1266,7 +1272,7 @@ class WikiVault:
             # auto-generated backlink sections are navigation UI, not
             # editorial links - strip before counting
             body_text = re.sub(
-                r"\n## Linked from\n(?:\n|- .*\n?)*", "\n", page["text"]
+                r"(?ms)(?:^|\n)## Linked from\s*\n.*?(?=\n## |\Z)", "\n", page["text"]
             )
             for link in WIKILINK_RE.findall(body_text):
                 link_stem = link.strip().split("/")[-1].strip()
@@ -1480,7 +1486,7 @@ class WikiVault:
             rel = page["rel"]
             stripped = dict(page)
             stripped["text"] = re.sub(
-                r"\n## Linked from\n(?:\n|- .*\n?)*", "\n", page["text"]
+                r"(?ms)(?:^|\n)## Linked from\s*\n.*?(?=\n## |\Z)", "\n", page["text"]
             )
             resolved_out = {
                 stem_to_rel[t]
