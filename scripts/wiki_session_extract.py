@@ -152,6 +152,43 @@ def parse_proposals(raw: str) -> list[dict]:
         return []
 
 
+def _error_status(error: str) -> tuple[str, str]:
+    """Return stable machine + human categories for an apply error."""
+    value = str(error or "").strip()
+    low = value.lower()
+    if "duplicate detected" in low:
+        return "duplicate", "Duplicate detected"
+    if any(token in low for token in (
+        "missing_profile_section",
+        "missing_h1",
+        "structure validation",
+        "curated pages require",
+        "require section",
+        "requires section",
+    )):
+        return "structure_validation", "Structure validation failed"
+    if "revision" in low and ("conflict" in low or "stale" in low):
+        return "revision_conflict", "Revision conflict"
+    return "write_failed", "Write failed"
+
+
+def _error_status_label(error: str) -> str:
+    return _error_status(error)[1]
+
+
+def _aggregate_extract_status(applied: list[dict]) -> str:
+    """Summarize per-page outcomes into the session extraction lifecycle status."""
+    successful = [item for item in applied if item.get("status") != "error"]
+    failed = [item for item in applied if item.get("status") == "error"]
+    if successful and failed:
+        return "partial"
+    if failed:
+        return "fail"
+    if successful:
+        return "success"
+    return "skip"
+
+
 def _extraction_report(report: dict | None) -> str:
     """Render the latest LLM extraction result for the session source note."""
     report = report or {}
@@ -169,9 +206,13 @@ def _extraction_report(report: dict | None) -> str:
             title = str(item.get("title") or page.rsplit("/", 1)[-1])
             summary = str(item.get("summary", "")).strip()
             status = str(item.get("status", "written"))
+            error = str(item.get("error", "")).strip()
             link = f"[[{page}|{title}]]"
             line = f"- `{status}` {link}"
-            if summary:
+            if status == "error":
+                label = str(item.get("error_label") or _error_status_label(error))
+                line += f" — {label}"
+            elif summary:
                 line += f" — {summary}"
             lines.append(line)
     else:
@@ -203,7 +244,7 @@ def update_extract_status(path: Path, status: str, report: dict | None = None, s
                     rf"\1\nextract_status: {status}", fm, count=1)
         if not re.search(r"(?m)^extract_status:", fm):
             fm = f"extract_status: {status}\n{fm.lstrip()}"
-    if status in {"success", "skip"} and not re.search(r"(?m)^extracted:", fm):
+    if status in {"success", "partial", "skip"} and not re.search(r"(?m)^extracted:", fm):
         fm += f"\nextracted: {date.today().isoformat()}"
     body = re.split(r"\n## LLM Extraction\n", body, maxsplit=1)[0].rstrip() + "\n\n"
     path.write_text(f"---{fm}\n---{body}{_extraction_report(report)}", encoding="utf-8")
@@ -301,12 +342,16 @@ def apply_proposals(vault: WikiVault, proposals: list[dict], store: MemoryStore 
                 "reason": prop.get("reason", ""),
             })
         except Exception as e:
+            error = str(e)[:500]
+            error_type, error_label = _error_status(error)
             applied.append({
                 "page": prop["page"],
                 "action": prop.get("action", ""),
                 "status": "error",
                 "title": prop.get("title", ""),
-                "error": str(e)[:150],
+                "error_type": error_type,
+                "error_label": error_label,
+                "error": error,
             })
     return applied
 
@@ -443,9 +488,7 @@ def main() -> int:
             }
         except Exception as exc:
             report["wiki_health_error"] = str(exc)[:200]
-        successful = [x for x in applied if x.get("status") != "error"]
-        failed = [x for x in applied if x.get("status") == "error"]
-        extract_status = "fail" if failed else ("success" if successful else "skip")
+        extract_status = _aggregate_extract_status(applied)
         report["extract_status"] = extract_status
         for source in sources:
             update_extract_status(source["path"], extract_status, report, store)

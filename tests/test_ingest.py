@@ -18,6 +18,18 @@ from tests.support import (
     valid_page_content,
 )
 
+
+
+def load_extract_module():
+    script = PLUGIN_DIR / "scripts" / "wiki_session_extract.py"
+    name = "wiki_session_extract_status_cases"
+    spec = importlib.util.spec_from_file_location(name, script)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
 class TestSessionExtractReport:
     def test_session_filename_is_safe(self):
         hook_path = PLUGIN_DIR / "scripts" / "wiki_turn_hook.py"
@@ -214,3 +226,71 @@ class TestIngestJobManager:
         )
         assert result[0]["status"] == "updated"
         assert store.read("concepts/existing")["revision"] != revision
+
+
+def test_extract_status_aggregation_matrix():
+    mod = load_extract_module()
+    assert mod._aggregate_extract_status([{"status": "created"}, {"status": "updated"}]) == "success"
+    assert mod._aggregate_extract_status([{"status": "updated"}, {"status": "error"}]) == "partial"
+    assert mod._aggregate_extract_status([{"status": "error"}, {"status": "error"}]) == "fail"
+    assert mod._aggregate_extract_status([]) == "skip"
+
+
+def test_error_status_categories_are_stable():
+    mod = load_extract_module()
+    assert mod._error_status("Duplicate detected: collision") == ("duplicate", "Duplicate detected")
+    assert mod._error_status("people/khoa.md: missing_profile_section: person pages require section: facts") == (
+        "structure_validation",
+        "Structure validation failed",
+    )
+    assert mod._error_status("revision conflict for page") == ("revision_conflict", "Revision conflict")
+    assert mod._error_status("permission denied") == ("write_failed", "Write failed")
+
+
+def test_extraction_report_includes_error_category():
+    mod = load_extract_module()
+    report = {
+        "extract_status": "partial",
+        "applied": [
+            {
+                "page": "people/girlfriend",
+                "title": "Girlfriend",
+                "status": "error",
+                "error": "Duplicate detected: collides with existing people/sang-girlfriend.md",
+            },
+            {
+                "page": "people/khoa",
+                "title": "Khoa",
+                "status": "error",
+                "error": "people/khoa.md: missing_profile_section: person pages require section: details or facts",
+            },
+            {
+                "page": "answers/reducing-max-drawdown-grid-ea",
+                "title": "Reducing Maximum Drawdown in Grid/DCA EAs",
+                "status": "updated",
+                "summary": "Recommended levers to cut max drawdown.",
+            },
+        ],
+    }
+
+    rendered = mod._extraction_report(report)
+
+    assert "- Status: `partial`" in rendered
+    assert "`error` [[people/girlfriend|Girlfriend]] — Duplicate detected" in rendered
+    assert "`error` [[people/khoa|Khoa]] — Structure validation failed" in rendered
+    assert "`updated` [[answers/reducing-max-drawdown-grid-ea|Reducing Maximum Drawdown in Grid/DCA EAs]] — Recommended levers" in rendered
+
+
+def test_partial_status_marks_source_as_extracted(tmp_path):
+    mod = load_extract_module()
+    source = tmp_path / "session.md"
+    source.write_text(
+        "---\ntype: source\nupdated: 2026-09-22\nextract_status: pending\n---\n\n# Session\n\nDialogue.\n",
+        encoding="utf-8",
+    )
+
+    mod.update_extract_status(source, "partial", {"extract_status": "partial", "applied": []})
+    text = source.read_text(encoding="utf-8")
+
+    assert "extract_status: partial" in text
+    assert "extracted: 2026-09-22" in text
