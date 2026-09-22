@@ -221,6 +221,45 @@ describe('Memory workspace shell', () => {
     expect(await screen.findByText('Response Style')).toBeVisible()
   })
 
+  it('renders CommonMark and GFM content in page viewer', async () => {
+    const user = userEvent.setup()
+    installApi({
+      '/api/pages/concepts/retry-policy.md': {
+        path: 'concepts/retry-policy.md',
+        content: [
+          '# Deployment Retry Policy',
+          '',
+          'Use **careful retries** and `bounded backoff`.',
+          '',
+          '## Matrix',
+          '',
+          '| Mode | Safe |',
+          '| --- | --- |',
+          '| Retry | Yes |',
+          '',
+          '```bash',
+          'deploy --retry',
+          '```',
+          '',
+          '- [x] Verified',
+        ].join('\n'),
+        truncated: false,
+        revision: 'abc123456',
+      },
+    })
+
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: 'Library' }))
+    await user.click(await screen.findByRole('button', { name: /deployment retry policy/i }))
+
+    const article = await screen.findByRole('article')
+    expect(within(article).getByRole('table')).toBeVisible()
+    expect(within(article).getByText('careful retries').tagName).toBe('STRONG')
+    expect(within(article).getByText('bounded backoff').tagName).toBe('CODE')
+    expect(within(article).getByText('deploy --retry').tagName).toBe('CODE')
+    expect(within(article).getByRole('checkbox')).toBeChecked()
+  })
+
   it('renders wiki links and opens the resolved canonical page', async () => {
     const user = userEvent.setup()
     render(<App />)

@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { ArrowUpRight, BookOpen, Sparkles } from 'lucide-react'
 import { reflectMemory } from '../api'
 import type { ReflectResponse } from '../types'
@@ -86,7 +88,20 @@ export function ReflectView({ initialQuery = '', onOpenPage }: { initialQuery?: 
 
           {result && !loading && (
             <div className="reflection-result">
-              <div className="reflection-copy">{result.reflection}</div>
+              <div className="reflection-copy markdown-body compact-markdown">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    table: ({ children, ...props }) => (
+                      <div className="markdown-table-wrap">
+                        <table {...props}>{children}</table>
+                      </div>
+                    ),
+                  }}
+                >
+                  {result.reflection}
+                </ReactMarkdown>
+              </div>
               <div className="source-heading">Sources</div>
               <div className="source-list">
                 {result.sources.map(source => <button key={source.path} className="source-link"

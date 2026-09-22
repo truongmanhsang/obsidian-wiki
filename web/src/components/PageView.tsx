@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, FileText } from 'lucide-react'
+import type { ReactNode } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { ArrowLeft, ExternalLink, FileText } from 'lucide-react'
 import { readPage, resolveWikiLink } from '../api'
 import type { MemoryPageDetail } from '../types'
 import { ErrorBanner } from './ErrorBanner'
@@ -28,80 +31,68 @@ function headingId(value: string) {
     .replace(/-+/g, '-')
 }
 
-type WikiLinkHandler = (target: string) => void
+function textContent(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(textContent).join('')
+  if (node && typeof node === 'object' && 'props' in node) {
+    return textContent((node as { props?: { children?: ReactNode } }).props?.children)
+  }
+  return ''
+}
 
-function renderInline(text: string, onWikiLink: WikiLinkHandler) {
-  const nodes: React.ReactNode[] = []
-  const pattern = /\[\[([^\]]+)\]\]/g
-  let cursor = 0
-  let match: RegExpExecArray | null
+function markdownLabel(value: string) {
+  return value.replace(/([\\\[\]])/g, '\\$1')
+}
 
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > cursor) nodes.push(text.slice(cursor, match.index))
-
-    const raw = match[1].trim()
+function replaceWikiLinks(value: string) {
+  return value.replace(/\[\[([^\]]+)\]\]/g, (_full, rawValue: string) => {
+    const raw = rawValue.trim()
     const separator = raw.indexOf('|')
     const target = (separator >= 0 ? raw.slice(0, separator) : raw).trim()
     const label = (separator >= 0 ? raw.slice(separator + 1) : raw.split('#')[0]).trim() || target
-
-    nodes.push(
-      <a
-        href={`#wiki:${encodeURIComponent(target)}`}
-        className="wiki-link"
-        key={`${match.index}-${target}`}
-        onClick={event => {
-          event.preventDefault()
-          onWikiLink(target)
-        }}
-      >
-        {label}
-      </a>,
-    )
-    cursor = pattern.lastIndex
-  }
-
-  if (cursor < text.length) nodes.push(text.slice(cursor))
-  return nodes
+    return `[${markdownLabel(label)}](#wiki:${encodeURIComponent(target)})`
+  })
 }
 
-function renderMarkdown(body: string, onWikiLink: WikiLinkHandler) {
-  const lines = body.split('\n')
-  const blocks: React.ReactNode[] = []
-  let list: string[] = []
+function replaceWikiLinksOutsideInlineCode(line: string) {
+  let result = ''
+  let cursor = 0
 
-  const flushList = () => {
-    if (!list.length) return
-    const items = list
-    list = []
-    blocks.push(<ul key={'list-' + blocks.length}>{items.map((item, index) => <li key={index}>{renderInline(item, onWikiLink)}</li>)}</ul>)
+  while (cursor < line.length) {
+    const tick = line.indexOf('`', cursor)
+    if (tick === -1) return result + replaceWikiLinks(line.slice(cursor))
+
+    result += replaceWikiLinks(line.slice(cursor, tick))
+    let runLength = 1
+    while (line[tick + runLength] === '`') runLength += 1
+    const marker = '`'.repeat(runLength)
+    const closing = line.indexOf(marker, tick + runLength)
+    if (closing === -1) return result + line.slice(tick)
+
+    result += line.slice(tick, closing + runLength)
+    cursor = closing + runLength
   }
 
-  lines.forEach((line, index) => {
-    const trimmed = line.trim()
-    if (trimmed.startsWith('- ')) {
-      list.push(trimmed.slice(2))
-      return
+  return result
+}
+
+/**
+ * Convert Obsidian wikilinks into ordinary Markdown fragment links so the
+ * CommonMark parser can render them. Fenced and inline code stays untouched.
+ */
+function preprocessWikiLinks(markdown: string) {
+  let fenceMarker = ''
+  return markdown.split('\n').map(line => {
+    const fence = line.match(/^\s*(```+|~~~+)/)?.[1] ?? ''
+    if (fence) {
+      const marker = fence[0]
+      if (!fenceMarker) fenceMarker = marker
+      else if (marker === fenceMarker) fenceMarker = ''
+      return line
     }
-
-    flushList()
-    if (!trimmed) return
-    if (/^###\s+/.test(trimmed)) {
-      const value = trimmed.replace(/^###\s+/, '')
-      blocks.push(<h3 id={headingId(value)} key={index}>{renderInline(value, onWikiLink)}</h3>)
-    } else if (/^##\s+/.test(trimmed)) {
-      const value = trimmed.replace(/^##\s+/, '')
-      blocks.push(<h2 id={headingId(value)} key={index}>{renderInline(value, onWikiLink)}</h2>)
-    } else if (/^#\s+/.test(trimmed)) {
-      const value = trimmed.replace(/^#\s+/, '')
-      blocks.push(<h1 id={headingId(value)} key={index}>{renderInline(value, onWikiLink)}</h1>)
-    } else if (/^>\s?/.test(trimmed)) {
-      blocks.push(<blockquote key={index}>{renderInline(trimmed.replace(/^>\s?/, ''), onWikiLink)}</blockquote>)
-    } else if (/^\`\`\`/.test(trimmed)) return
-    else blocks.push(<p key={index}>{renderInline(trimmed, onWikiLink)}</p>)
-  })
-
-  flushList()
-  return blocks
+    if (fenceMarker) return line
+    return replaceWikiLinksOutsideInlineCode(line)
+  }).join('\n')
 }
 
 export function PageView({
@@ -129,6 +120,7 @@ export function PageView({
   }, [path])
 
   const parsed = useMemo(() => page ? stripFrontmatter(page.content) : null, [page])
+  const markdown = useMemo(() => parsed ? preprocessWikiLinks(parsed.body) : '', [parsed])
 
   useEffect(() => {
     if (!page || !pendingFragment) return
@@ -167,6 +159,11 @@ export function PageView({
     ?? page.path.split('/').pop()?.replace('.md', '')
     ?? page.path
 
+  const heading = (level: 1 | 2 | 3 | 4 | 5 | 6, children: ReactNode) => {
+    const Tag = `h${level}` as keyof React.JSX.IntrinsicElements
+    return <Tag id={headingId(textContent(children))}>{children}</Tag>
+  }
+
   return (
     <article className="document-view">
       <button className="back-button" onClick={onBack}><ArrowLeft size={15} /> Back to workspace</button>
@@ -184,7 +181,61 @@ export function PageView({
         </div>
       </div>
       <div className="document-divider" />
-      <div className="document-body">{renderMarkdown(parsed.body, openWikiLink)}</div>
+      <div className="document-body markdown-body">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            h1: ({ children }) => heading(1, children),
+            h2: ({ children }) => heading(2, children),
+            h3: ({ children }) => heading(3, children),
+            h4: ({ children }) => heading(4, children),
+            h5: ({ children }) => heading(5, children),
+            h6: ({ children }) => heading(6, children),
+            table: ({ children, ...props }) => (
+              <div className="markdown-table-wrap">
+                <table {...props}>{children}</table>
+              </div>
+            ),
+            img: ({ alt = '', ...props }) => <img {...props} alt={alt} loading="lazy" />,
+            a: ({ href = '', children, ...props }) => {
+              if (href.startsWith('#wiki:')) {
+                const encoded = href.slice('#wiki:'.length)
+                let target = encoded
+                try { target = decodeURIComponent(encoded) } catch { /* keep encoded target */ }
+                return (
+                  <a
+                    {...props}
+                    href={href}
+                    className="wiki-link"
+                    onClick={event => {
+                      event.preventDefault()
+                      void openWikiLink(target)
+                    }}
+                  >
+                    {children}
+                  </a>
+                )
+              }
+
+              const external = /^https?:\/\//i.test(href)
+              return (
+                <a
+                  {...props}
+                  href={href}
+                  className={external ? 'markdown-link external-link' : 'markdown-link'}
+                  target={external ? '_blank' : undefined}
+                  rel={external ? 'noreferrer noopener' : undefined}
+                >
+                  {children}
+                  {external && <ExternalLink className="external-link-icon" size={11} aria-hidden="true" />}
+                </a>
+              )
+            },
+          }}
+        >
+          {markdown}
+        </ReactMarkdown>
+      </div>
       {page.truncated && <div className="truncated-note">This document is truncated at the API read limit.</div>}
     </article>
   )
