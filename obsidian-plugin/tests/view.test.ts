@@ -40,6 +40,7 @@ describe("MemoryWorkspaceView", () => {
     expect(view.containerEl.textContent).toContain("Search");
     expect(view.containerEl.textContent).toContain("Reflect");
     expect(view.containerEl.textContent).not.toContain("Browse");
+    expect(view.containerEl.textContent).not.toContain("browse");
 
     const input = view.containerEl.querySelector<HTMLInputElement>(".memory-search-input")!;
     input.value = "useful";

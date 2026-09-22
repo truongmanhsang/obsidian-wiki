@@ -6,6 +6,7 @@
 .memory-workspace {
   --memory-radius: 10px;
   --memory-gap: 12px;
+  container-type: inline-size;
   min-height: 100%;
   padding: clamp(18px, 3vw, 34px);
   color: var(--text-normal);
@@ -321,7 +322,7 @@
   white-space: nowrap;
 }
 
-@media (max-width: 640px) {
+@container (max-width: 640px) {
   .memory-workspace { padding: 16px 12px; }
 
   .memory-search-toolbar,

@@ -70,7 +70,7 @@ export class MemoryWorkspaceView extends ItemView {
     const header = element("header", "memory-workspace-header");
     header.appendChild(element("div", "memory-eyebrow", "OBSIDIAN MEMORY"));
     header.appendChild(element("h1", "memory-title", "Memory Workspace"));
-    header.appendChild(element("p", "memory-subtitle", "Search, browse, and reflect over your durable knowledge."));
+    header.appendChild(element("p", "memory-subtitle", "Search and reflect over your durable knowledge."));
     this.root.appendChild(header);
 
     const tabs = element("nav", "memory-tabs");
