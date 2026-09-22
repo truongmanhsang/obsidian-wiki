@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ForceGraph2D, { type ForceGraphMethods, type LinkObject, type NodeObject } from 'react-force-graph-2d'
-import { Focus, Maximize2, Network, RotateCcw, Search, Settings2, X } from 'lucide-react'
+import { Focus, Maximize2, Network, PinOff, RotateCcw, Search, Settings2, X } from 'lucide-react'
 import { getGraph } from '../api'
 import {
   DEFAULT_GRAPH_SETTINGS,
@@ -48,6 +48,27 @@ function nodeTypeLabel(type: GraphPageType) {
   return type === 'source' ? 'Sources' : type.charAt(0).toUpperCase() + type.slice(1)
 }
 
+type PinnedPosition = { x: number; y: number }
+
+function loadPinnedPositions(): Record<string, PinnedPosition> {
+  try {
+    const raw = localStorage.getItem('memory-graph-pins-v1')
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, PinnedPosition>
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([, value]) =>
+        Number.isFinite(value?.x) && Number.isFinite(value?.y),
+      ),
+    )
+  } catch {
+    return {}
+  }
+}
+
+function savePinnedPositions(positions: Record<string, PinnedPosition>) {
+  localStorage.setItem('memory-graph-pins-v1', JSON.stringify(positions))
+}
+
 export function GraphView({ onOpenPage }: { onOpenPage: (path: string) => void }) {
   const [graph, setGraph] = useState<GraphResponse | null>(null)
   const [settings, setSettings] = useState<GraphSettings>(() => loadGraphSettings())
@@ -58,6 +79,7 @@ export function GraphView({ onOpenPage }: { onOpenPage: (path: string) => void }
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const graphRef = useRef<ForceGraphMethods<GraphNode, GraphLink> | undefined>(undefined)
+  const pinnedPositions = useRef<Record<string, PinnedPosition>>(loadPinnedPositions())
   const { ref: canvasRef, size } = useCanvasSize()
 
   useEffect(() => {
@@ -79,7 +101,14 @@ export function GraphView({ onOpenPage }: { onOpenPage: (path: string) => void }
   const graphData = useMemo(() => {
     if (!filtered) return { nodes: [] as CanvasNode[], links: [] as CanvasLink[] }
     return {
-      nodes: filtered.nodes.map(node => ({ ...node, degree: filtered.degrees.get(node.id) ?? 0 })) as CanvasNode[],
+      nodes: filtered.nodes.map(node => {
+        const pinned = pinnedPositions.current[node.id]
+        return {
+          ...node,
+          degree: filtered.degrees.get(node.id) ?? 0,
+          ...(pinned ? { fx: pinned.x, fy: pinned.y, x: pinned.x, y: pinned.y } : {}),
+        }
+      }) as CanvasNode[],
       links: filtered.links.map(link => ({ ...link })) as CanvasLink[],
     }
   }, [filtered])
@@ -145,6 +174,17 @@ export function GraphView({ onOpenPage }: { onOpenPage: (path: string) => void }
     setFocusedNode(null)
   }
 
+  const releasePinnedNodes = () => {
+    pinnedPositions.current = {}
+    savePinnedPositions({})
+    graphData.nodes.forEach(node => {
+      node.fx = undefined
+      node.fy = undefined
+    })
+    setFocusedNode(null)
+    graphRef.current?.d3ReheatSimulation()
+  }
+
   if (loading) return <LoadingState label="Mapping vault links…" />
   if (error) return <ErrorBanner message={error} />
   if (!graph || !filtered) return <ErrorBanner message="Graph data is unavailable." />
@@ -182,6 +222,7 @@ export function GraphView({ onOpenPage }: { onOpenPage: (path: string) => void }
           <button className="secondary-button compact-button" onClick={focusSearch} disabled={!searchQuery.trim()}><Focus size={14} /> Focus</button>
           <div className="graph-toolbar-spacer" />
           <button className="icon-button graph-tool-button" aria-label="Fit graph to view" onClick={() => graphRef.current?.zoomToFit(500, 42)}><Maximize2 size={15} /></button>
+          <button className="icon-button graph-tool-button" aria-label="Release pinned nodes" title="Release pinned nodes" onClick={releasePinnedNodes}><PinOff size={15} /></button>
           <button className={`icon-button graph-tool-button ${settingsOpen ? 'active' : ''}`} aria-label="Toggle graph settings" onClick={() => setSettingsOpen(value => !value)}><Settings2 size={15} /></button>
         </div>
 
@@ -260,6 +301,16 @@ export function GraphView({ onOpenPage }: { onOpenPage: (path: string) => void }
                 }}
                 nodeLabel={node => `${node.title} · ${node.type} · ${node.degree ?? 0} connections`}
                 onNodeHover={node => setHoverNode(node?.id ? String(node.id) : null)}
+                onNodeDragEnd={node => {
+                  if (typeof node.x !== 'number' || typeof node.y !== 'number') return
+                  node.fx = node.x
+                  node.fy = node.y
+                  pinnedPositions.current = {
+                    ...pinnedPositions.current,
+                    [String(node.id)]: { x: node.x, y: node.y },
+                  }
+                  savePinnedPositions(pinnedPositions.current)
+                }}
                 onNodeClick={node => {
                   if (node.type === 'source') {
                     setFocusedNode(node.id)
