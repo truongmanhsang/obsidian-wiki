@@ -126,3 +126,23 @@ def test_pages_endpoint_supports_query_and_offset(client):
     assert response.json()["offset"] == 0
     assert response.json()["limit"] == 1
     assert response.json()["pages"][0]["path"] == "concepts/retry-policy.md"
+
+
+def test_resolve_endpoint_maps_wiki_links_to_canonical_pages(client):
+    by_stem = client.get("/api/resolve?target=retry-policy&from=answers/recovery.md")
+    by_title = client.get("/api/resolve?target=Deployment%20Retry%20Policy&from=answers/recovery.md")
+    with_fragment = client.get("/api/resolve?target=concepts%2Fretry-policy.md%23Summary&from=answers/recovery.md")
+
+    assert by_stem.status_code == 200
+    assert by_stem.json() == {"path": "concepts/retry-policy.md", "fragment": ""}
+    assert by_title.status_code == 200
+    assert by_title.json()["path"] == "concepts/retry-policy.md"
+    assert with_fragment.status_code == 200
+    assert with_fragment.json() == {"path": "concepts/retry-policy.md", "fragment": "Summary"}
+
+
+def test_resolve_endpoint_rejects_unknown_wiki_link(client):
+    response = client.get("/api/resolve?target=does-not-exist&from=concepts/retry-policy.md")
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "page_not_found"

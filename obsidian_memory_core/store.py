@@ -124,6 +124,63 @@ class MemoryStore:
             return None
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
+    def resolve_page(self, target: str, from_page: str | None = None) -> dict[str, str]:
+        """Resolve an Obsidian wiki-link target to one canonical curated page."""
+        raw = str(target or "").strip()
+        if not raw:
+            raise MemoryWriteError("wiki link target is empty")
+
+        # Obsidian link syntax permits heading/block suffixes. Resolution is for
+        # the page itself; the fragment is returned so the web client can scroll.
+        page_target, _, fragment = raw.partition("#")
+        page_target = page_target.strip().replace("\\", "/")
+        if page_target.lower().endswith(".md"):
+            page_target = page_target[:-3]
+        normalized = page_target.casefold().strip("/")
+        if not normalized:
+            # [[#Heading]] targets the current page.
+            if not from_page:
+                raise MemoryWriteError(f"page not found: {target}")
+            normalized = str(from_page).removesuffix(".md").casefold().strip("/")
+
+        pages = self.vault.load_pages()
+        current_dir = ""
+        if from_page and "/" in str(from_page):
+            current_dir = str(from_page).rsplit("/", 1)[0].casefold()
+
+        candidates: list[tuple[int, dict[str, Any]]] = []
+        for page in pages:
+            rel = str(page.get("rel", ""))
+            rel_no_ext = rel[:-3] if rel.lower().endswith(".md") else rel
+            rel_key = rel_no_ext.casefold()
+            stem_key = Path(rel_no_ext).name.casefold()
+            title_key = str(page.get("title", "")).strip().casefold()
+
+            score = 0
+            if rel_key == normalized:
+                score = 100
+            elif current_dir and f"{current_dir}/{normalized}" == rel_key:
+                score = 95
+            elif stem_key == normalized:
+                score = 80
+            elif title_key == normalized:
+                score = 70
+            if score:
+                candidates.append((score, page))
+
+        if not candidates:
+            raise MemoryWriteError(f"page not found: {target}")
+        candidates.sort(key=lambda item: (-item[0], str(item[1].get("rel", "")).casefold()))
+        best_score = candidates[0][0]
+        best = [page for score, page in candidates if score == best_score]
+        if len(best) > 1:
+            raise MemoryWriteError(f"ambiguous wiki link: {target}")
+
+        return {
+            "path": str(best[0]["rel"]),
+            "fragment": fragment.strip(),
+        }
+
     def read(self, page: str) -> dict[str, Any]:
         path = self._page_path(page)
         if path.suffix != ".md":

@@ -56,6 +56,11 @@ export function listPages(params: {
   return request<PageListResponse>(`/api/pages?${search.toString()}`)
 }
 
+export function resolveWikiLink(target: string, fromPath: string): Promise<{ path: string; fragment: string }> {
+  const search = new URLSearchParams({ target, from: fromPath })
+  return request(`/api/resolve?${search.toString()}`)
+}
+
 export function readPage(path: string): Promise<MemoryPageDetail> {
   return request(`/api/pages/${path.split('/').map(encodeURIComponent).join('/')}`)
 }

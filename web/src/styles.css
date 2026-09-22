@@ -1104,6 +1104,19 @@ button.compact-row:hover { background: var(--surface-hover); }
   line-height: 1.75;
 }
 .document-body p { margin: 0 0 12px; }
+
+.document-body .wiki-link {
+  color: var(--accent-strong);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-strong) 45%, transparent);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.document-body .wiki-link:hover {
+  color: var(--text);
+  border-bottom-color: var(--accent-strong);
+  background: var(--accent-soft);
+}
 .document-body ul { margin: 8px 0 16px; padding-left: 21px; }
 .document-body li { margin: 5px 0; }
 .document-body blockquote {

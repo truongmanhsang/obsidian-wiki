@@ -33,6 +33,14 @@ function installApi(overrides: Record<string, ApiOverride> = {}) {
       jobs: [{ job_id: 'ingest-123', session_id: 'session-123', status: 'completed', submitted_at: '2026-09-21T10:00:00Z' }],
     })
     if (url.startsWith('/api/logs')) return ok({ log_tail: '2026-09-21 WRITE concepts/retry-policy\n' })
+    if (url.startsWith('/api/resolve?')) {
+      const params = new URLSearchParams(url.split('?')[1])
+      const target = params.get('target')
+      if (target === 'retry-policy' || target === 'concepts/retry-policy' || target === 'concepts/retry-policy.md') {
+        return ok({ path: 'concepts/retry-policy.md', fragment: '' })
+      }
+      return ok({ error: 'page_not_found', message: `page not found: ${target}` }, 404)
+    }
     if (url.startsWith('/api/search')) return ok({
       count: 1,
       results: [{ path: 'concepts/retry-policy.md', title: 'Deployment Retry Policy', type: 'concept', updated: '2026-09-21', snippet: 'Retry deployments carefully.' }],
@@ -44,7 +52,7 @@ function installApi(overrides: Record<string, ApiOverride> = {}) {
     })
     if (url.includes('/api/pages/people/test-user.md')) return ok({
       path: 'people/test-user.md',
-      content: '# Test User\n\nPrefers concise communication.',
+      content: '# Test User\n\nPrefers concise communication. See [[retry-policy|retry guidance]].',
       truncated: false,
       revision: 'def123456',
     })
@@ -211,6 +219,21 @@ describe('Memory workspace shell', () => {
 
     await user.click(screen.getByRole('button', { name: /preference\s*1/i }))
     expect(await screen.findByText('Response Style')).toBeVisible()
+  })
+
+  it('renders wiki links and opens the resolved canonical page', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: 'Library' }))
+    await user.click(await screen.findByRole('button', { name: /test user/i }))
+
+    const wikiLink = await screen.findByRole('link', { name: 'retry guidance' })
+    expect(wikiLink).toHaveClass('wiki-link')
+    await user.click(wikiLink)
+
+    expect(await screen.findByRole('article')).toHaveTextContent('Retry deployments carefully.')
+    expect(screen.getByText('concepts/retry-policy.md')).toBeVisible()
   })
 
   it('reflects over sources and opens a cited page', async () => {

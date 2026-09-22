@@ -133,7 +133,11 @@ export default function App() {
 
         <section className="content-column">
           {view === 'page' && pagePath ? (
-            <PageView path={pagePath} onBack={() => setView(returnView === 'page' ? 'search' : returnView)} />
+            <PageView
+              path={pagePath}
+              onBack={() => setView(returnView === 'page' ? 'search' : returnView)}
+              onOpenPage={setPagePath}
+            />
           ) : view === 'overview' ? (
             <OverviewView onNavigate={navigate} onOpenPage={path => openPage(path, 'overview')} />
           ) : view === 'library' ? (

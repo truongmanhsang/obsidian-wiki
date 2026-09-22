@@ -112,6 +112,17 @@ async def pages_endpoint(request: Request) -> JSONResponse:
     )
 
 
+async def resolve_page_endpoint(request: Request) -> JSONResponse:
+    target = request.query_params.get("target", "").strip()
+    from_page = request.query_params.get("from") or None
+    if not target:
+        return _error("invalid_target", "resolve requires a non-empty target parameter", 400)
+    try:
+        return JSONResponse(_store(request).resolve_page(target, from_page=from_page))
+    except MemoryWriteError as exc:
+        return _error("page_not_found", str(exc), 404)
+
+
 async def page_endpoint(request: Request) -> JSONResponse:
     page_path = request.path_params.get("page_path", "")
     try:
@@ -193,6 +204,7 @@ def create_web_app(vault_path: str | None = None) -> Starlette:
         Route("/api/health", health_endpoint, methods=["GET"]),
         Route("/api/search", search_endpoint, methods=["GET"]),
         Route("/api/pages", pages_endpoint, methods=["GET"]),
+        Route("/api/resolve", resolve_page_endpoint, methods=["GET"]),
         Route("/api/pages/{page_path:path}", page_endpoint, methods=["GET"]),
         Route("/api/reflect", reflect_endpoint, methods=["POST"]),
         Route("/api/logs", logs_endpoint, methods=["GET"]),
