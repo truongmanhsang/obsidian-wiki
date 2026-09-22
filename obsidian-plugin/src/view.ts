@@ -1,4 +1,4 @@
-import { ItemView } from "obsidian";
+import { ItemView, MarkdownRenderer } from "obsidian";
 import type { App, WorkspaceLeaf } from "obsidian";
 import type { McpClient } from "./mcpClient";
 import type { ReflectResult, SearchFilters, SearchHit, SearchResult } from "./types";
@@ -222,7 +222,9 @@ export class MemoryWorkspaceView extends ItemView {
       const response = await this.client.callTool<ReflectResult>("memory_reflect", { query, limit: 8 });
       output.innerHTML = "";
       if (response.error) throw new Error(response.message || response.error);
-      output.appendChild(element("div", "memory-reflection-card", response.reflection || "No reflection returned."));
+      const reflection = element("div", "memory-reflection-card");
+      output.appendChild(reflection);
+      await MarkdownRenderer.renderMarkdown(response.reflection || "No reflection returned.", reflection, "", this);
       if (response.sources?.length) {
         const sources = element("div", "memory-sources-list");
         sources.appendChild(element("div", "memory-sources-title", "Sources"));

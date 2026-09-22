@@ -129,6 +129,15 @@
   outline-offset: 2px;
 }
 
+.memory-search-input:focus,
+.memory-search-type:focus,
+.memory-search-path:focus,
+.memory-reflect-input:focus {
+  border-color: var(--interactive-accent);
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -1px;
+}
+
 .memory-search-source-toggle {
   display: inline-flex;
   align-items: center;
@@ -310,9 +319,13 @@
   color: var(--text-normal);
   background: var(--background-secondary);
   line-height: 1.65;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.memory-reflection-card p:first-child { margin-top: 0; }
+.memory-reflection-card p:last-child { margin-bottom: 0; }
+.memory-reflection-card ul,
+.memory-reflection-card ol { margin-block: 0.6em; }
 
 .memory-sources-list {
   display: flex;

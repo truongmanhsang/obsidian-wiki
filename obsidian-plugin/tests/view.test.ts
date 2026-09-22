@@ -10,8 +10,12 @@ vi.mock("obsidian", () => ({
       this.app = leaf.app;
     }
   },
+  MarkdownRenderer: { renderMarkdown: vi.fn(async (markdown: string, container: HTMLElement) => {
+    container.textContent = markdown;
+  }) },
 }));
 
+import { MarkdownRenderer } from "obsidian";
 import { MemoryWorkspaceView } from "../src/view";
 
 const makeView = (callTool: ReturnType<typeof vi.fn>) => {
@@ -78,6 +82,12 @@ describe("MemoryWorkspaceView", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(callTool).toHaveBeenCalledWith("memory_reflect", { query: "What workflow is recommended?", limit: 8 });
+    expect(MarkdownRenderer.renderMarkdown).toHaveBeenCalledWith(
+      "The sources agree on a calm workflow.",
+      expect.any(HTMLElement),
+      "",
+      view,
+    );
     expect(view.containerEl.querySelector(".memory-reflect-output")?.getAttribute("aria-live")).toBe("polite");
     expect(view.containerEl.querySelector(".memory-reflection-card")).toBeTruthy();
     expect(view.containerEl.querySelector(".memory-sources-list")).toBeTruthy();
