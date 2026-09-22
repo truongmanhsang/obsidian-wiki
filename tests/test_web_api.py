@@ -27,6 +27,20 @@ def client(tmp_path, monkeypatch):
             "# Deployment Retry Policy\n\n## Summary\n\nRetry deployments carefully.\n\n## Related\n",
         ),
     )
+    store.write(
+        "answers/recovery",
+        valid_page_content(
+            "answers/recovery",
+            "# Recovery Answer\n\nA durable answer.\n",
+        ),
+    )
+    store.write(
+        "preferences/response-style",
+        valid_page_content(
+            "preferences/response-style",
+            "# Response Style\n\nPrefer concise responses.\n",
+        ),
+    )
     from web_api import create_web_app
 
     with TestClient(create_web_app(str(vault))) as test_client:
@@ -69,7 +83,7 @@ def test_health_endpoint_reports_total_page_count(client):
 
     assert response.status_code == 200
     assert response.json()["ok"] is True
-    assert response.json()["pages"] == 2
+    assert response.json()["pages"] == 4
 
 
 def test_logs_endpoint_returns_recent_vault_activity(client):
@@ -87,3 +101,28 @@ def test_ingest_status_endpoint_is_read_only_and_empty_by_default(client):
     assert response.json()["running"] is None
     assert response.json()["jobs"] == []
     assert client.post("/api/ingest/submit", json={}).status_code in {404, 405}
+
+
+def test_pages_endpoint_filters_before_paginating(client):
+    answer = client.get("/api/pages?type=answer&limit=1&offset=0")
+    preference = client.get("/api/pages?type=preference&limit=1&offset=0")
+
+    assert answer.status_code == 200
+    assert answer.json()["total"] == 1
+    assert answer.json()["pages"][0]["type"] == "answer"
+    assert answer.json()["pages"][0]["path"] == "answers/recovery.md"
+
+    assert preference.status_code == 200
+    assert preference.json()["total"] == 1
+    assert preference.json()["pages"][0]["type"] == "preference"
+    assert preference.json()["pages"][0]["path"] == "preferences/response-style.md"
+
+
+def test_pages_endpoint_supports_query_and_offset(client):
+    response = client.get("/api/pages?q=retry&limit=1&offset=0")
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["offset"] == 0
+    assert response.json()["limit"] == 1
+    assert response.json()["pages"][0]["path"] == "concepts/retry-policy.md"

@@ -97,10 +97,19 @@ async def search_endpoint(request: Request) -> JSONResponse:
 
 async def pages_endpoint(request: Request) -> JSONResponse:
     try:
-        limit = _limit(request.query_params.get("limit"), 200, 500)
-    except ValueError as exc:
-        return _error("invalid_limit", str(exc), 400)
-    return JSONResponse(_store(request).list(limit))
+        limit = _limit(request.query_params.get("limit"), 25, 100)
+        offset_raw = request.query_params.get("offset", "0")
+        offset = int(offset_raw)
+        if offset < 0:
+            raise ValueError("offset must be at least 0")
+    except (TypeError, ValueError) as exc:
+        return _error("invalid_pagination", str(exc), 400)
+
+    page_type = request.query_params.get("type") or None
+    query = request.query_params.get("q") or None
+    return JSONResponse(
+        _store(request).list(limit, offset=offset, page_type=page_type, query=query)
+    )
 
 
 async def page_endpoint(request: Request) -> JSONResponse:

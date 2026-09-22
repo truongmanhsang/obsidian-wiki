@@ -7,12 +7,14 @@ function ok(payload: unknown, status = 200) {
   return Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => payload } as Response)
 }
 
-function installApi(overrides: Record<string, unknown> = {}) {
+type ApiOverride = unknown | ((url: string, init?: RequestInit) => unknown)
+
+function installApi(overrides: Record<string, ApiOverride> = {}) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
 
     for (const [needle, payload] of Object.entries(overrides)) {
-      if (url.includes(needle)) return ok(payload)
+      if (url.includes(needle)) return ok(typeof payload === 'function' ? payload(url, init) : payload)
     }
 
     if (url === '/api/health') return ok({ ok: true, service: 'obsidian-memory', pages: 2 })
@@ -22,6 +24,9 @@ function installApi(overrides: Record<string, unknown> = {}) {
         { path: 'concepts/retry-policy.md', title: 'Deployment Retry Policy', type: 'concept', updated: '2026-09-21' },
         { path: 'people/test-user.md', title: 'Test User', type: 'person', updated: '2026-09-20' },
       ],
+      total: 2,
+      offset: 0,
+      limit: 25,
     })
     if (url.startsWith('/api/ingest/status')) return ok({
       running: null,
@@ -97,7 +102,7 @@ describe('Memory workspace shell', () => {
       const url = String(input)
       if (url.startsWith('/api/search')) return Promise.reject(new Error('API offline'))
       if (url === '/api/health') return ok({ ok: true, service: 'obsidian-memory', pages: 0 })
-      if (url.startsWith('/api/pages?')) return ok({ stats: {}, pages: [] })
+      if (url.startsWith('/api/pages?')) return ok({ stats: {}, pages: [], total: 0, offset: 0, limit: 25 })
       if (url.startsWith('/api/ingest/status')) return ok({ running: null, jobs: [] })
       if (url.startsWith('/api/logs')) return ok({ log_tail: '' })
       return ok({})
@@ -119,6 +124,93 @@ describe('Memory workspace shell', () => {
     expect(await screen.findByText('Deployment Retry Policy')).toBeVisible()
     await user.click(screen.getByRole('button', { name: /deployment retry policy/i }))
     expect(await screen.findByRole('article')).toHaveTextContent('Retry deployments carefully.')
+  })
+
+  it('paginates the library and resets pagination when filtering', async () => {
+    const user = userEvent.setup()
+    const pages = Array.from({ length: 30 }, (_, index) => ({
+      path: `concepts/page-${String(index + 1).padStart(2, '0')}.md`,
+      title: `Page ${String(index + 1).padStart(2, '0')}`,
+      type: 'concept',
+      updated: '2026-09-21',
+    }))
+    installApi({
+      '/api/pages?': (url: string) => {
+        const params = new URLSearchParams(url.split('?')[1])
+        const offset = Number(params.get('offset') ?? 0)
+        const limit = Number(params.get('limit') ?? 25)
+        const query = (params.get('q') ?? '').toLowerCase()
+        const filtered = pages.filter(item => !query || item.title.toLowerCase().includes(query) || item.path.toLowerCase().includes(query))
+        return {
+          stats: { concept: 30 },
+          pages: filtered.slice(offset, offset + limit),
+          total: filtered.length,
+          offset,
+          limit,
+        }
+      },
+    })
+
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: 'Library' }))
+
+    const pagination = await screen.findByRole('navigation', { name: 'Library pagination' })
+    expect(pagination).toHaveTextContent('Showing 1–25 of 30')
+    expect(within(pagination).getByLabelText('Page 1 of 2')).toBeVisible()
+    expect(screen.queryByText('Page 26')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Next library page' }))
+    expect(await screen.findByText('Page 26')).toBeVisible()
+    const secondPage = screen.getByRole('navigation', { name: 'Library pagination' })
+    expect(secondPage).toHaveTextContent('Showing 26–30 of 30')
+    expect(within(secondPage).getByLabelText('Page 2 of 2')).toBeVisible()
+
+    await user.type(screen.getByRole('textbox', { name: 'Filter library' }), 'Page 03')
+    expect(await screen.findByText('Page 03')).toBeVisible()
+    const filteredPage = screen.getByRole('navigation', { name: 'Library pagination' })
+    expect(filteredPage).toHaveTextContent('Showing 1–1 of 1')
+    expect(within(filteredPage).getByLabelText('Page 1 of 1')).toBeVisible()
+  })
+
+  it('loads answer and preference filters from the server instead of the initial page slice', async () => {
+    const user = userEvent.setup()
+    const commonStats = { concept: 500, answer: 2, preference: 1 }
+    installApi({
+      '/api/pages?': (url: string) => {
+        const params = new URLSearchParams(url.split('?')[1])
+        const type = params.get('type')
+        if (type === 'answer') return {
+          stats: commonStats,
+          pages: [{ path: 'answers/recovery.md', title: 'Recovery Answer', type: 'answer', updated: '2026-09-22' }],
+          total: 2,
+          offset: 0,
+          limit: 25,
+        }
+        if (type === 'preference') return {
+          stats: commonStats,
+          pages: [{ path: 'preferences/style.md', title: 'Response Style', type: 'preference', updated: '2026-09-22' }],
+          total: 1,
+          offset: 0,
+          limit: 25,
+        }
+        return {
+          stats: commonStats,
+          pages: [{ path: 'concepts/first.md', title: 'First Concept', type: 'concept', updated: '2026-09-22' }],
+          total: 503,
+          offset: 0,
+          limit: 25,
+        }
+      },
+    })
+
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: 'Library' }))
+
+    await user.click(await screen.findByRole('button', { name: /answer\s*2/i }))
+    expect(await screen.findByText('Recovery Answer')).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: /preference\s*1/i }))
+    expect(await screen.findByText('Response Style')).toBeVisible()
   })
 
   it('reflects over sources and opens a cited page', async () => {

@@ -20,6 +20,14 @@ export type MemoryPage = {
 
 export type MemoryStats = Record<string, number>
 
+export type PageListResponse = {
+  stats: MemoryStats
+  pages: MemoryPage[]
+  total: number
+  offset: number
+  limit: number
+}
+
 export type MemoryPageDetail = {
   path: string
   content: string

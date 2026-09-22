@@ -6,7 +6,7 @@ import {
   type LogResponse,
   type MemoryPage,
   type MemoryPageDetail,
-  type MemoryStats,
+  type PageListResponse,
   type ReflectResponse,
   type SearchResponse,
 } from './types'
@@ -42,8 +42,18 @@ export function searchMemory(params: {
   return request<SearchResponse>(`/api/search?${search.toString()}`)
 }
 
-export function listPages(limit = 500): Promise<{ stats: MemoryStats; pages: MemoryPage[] }> {
-  return request(`/api/pages?limit=${limit}`)
+export function listPages(params: {
+  limit?: number
+  offset?: number
+  type?: string
+  query?: string
+} = {}): Promise<PageListResponse> {
+  const search = new URLSearchParams()
+  search.set('limit', String(params.limit ?? 25))
+  search.set('offset', String(params.offset ?? 0))
+  if (params.type && params.type !== 'all') search.set('type', params.type)
+  if (params.query?.trim()) search.set('q', params.query.trim())
+  return request<PageListResponse>(`/api/pages?${search.toString()}`)
 }
 
 export function readPage(path: string): Promise<MemoryPageDetail> {

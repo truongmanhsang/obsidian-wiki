@@ -143,11 +143,42 @@ class MemoryStore:
         results = self.vault.search(query, limit=limit, filters=filters, precise=precise)
         return {"results": results, "count": len(results)}
 
-    def list(self, limit: int = 50) -> dict[str, Any]:
+    def list(
+        self,
+        limit: int = 50,
+        *,
+        offset: int = 0,
+        page_type: str | None = None,
+        query: str | None = None,
+    ) -> dict[str, Any]:
         pages = self.vault.load_pages()
+        normalized_type = (page_type or "").strip().casefold()
+        normalized_query = (query or "").strip().casefold()
+        if normalized_type:
+            pages = [p for p in pages if str(p.get("ptype", "")).casefold() == normalized_type]
+        if normalized_query:
+            pages = [
+                p for p in pages
+                if normalized_query in str(p.get("title", "")).casefold()
+                or normalized_query in str(p.get("rel", "")).casefold()
+            ]
+        pages = sorted(
+            pages,
+            key=lambda p: (str(p.get("updated", "")), str(p.get("rel", "")).casefold()),
+            reverse=True,
+        )
+        offset = max(0, int(offset or 0))
+        limit = max(1, int(limit or 1))
+        page_slice = pages[offset:offset + limit]
         return {
             "stats": self.vault.stats(),
-            "pages": [{"path": p["rel"], "title": p["title"], "type": p["ptype"], "updated": p["updated"]} for p in pages[:limit]],
+            "total": len(pages),
+            "offset": offset,
+            "limit": limit,
+            "pages": [
+                {"path": p["rel"], "title": p["title"], "type": p["ptype"], "updated": p["updated"]}
+                for p in page_slice
+            ],
         }
 
     def lint(self) -> dict[str, Any]:
