@@ -142,11 +142,11 @@ if str(_PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_DIR))
 
 try:  # submodule import when loaded as a package
-    from .obsidian_memory_core import MemoryStore, RevisionConflict
+    from .obsidian_memory_core import IngestJobManager, MemoryStore, RevisionConflict
     from .obsidian_memory_core.config import DEFAULT_VAULT_PATH, vault_path
     from .obsidian_memory_core.wiki import WikiVault, WikiVaultError, StructureValidationError
 except ImportError:  # pragma: no cover - flat import fallback
-    from obsidian_memory_core import MemoryStore, RevisionConflict  # type: ignore
+    from obsidian_memory_core import IngestJobManager, MemoryStore, RevisionConflict  # type: ignore
     from obsidian_memory_core.config import DEFAULT_VAULT_PATH, vault_path  # type: ignore
     from obsidian_memory_core.wiki import WikiVault, WikiVaultError, StructureValidationError  # type: ignore
 
@@ -278,6 +278,8 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
         self._config = config or _load_plugin_config()
         self._store: Optional[MemoryStore] = None
         self._vault: Optional[WikiVault] = None
+        self._ingest_manager: Optional[IngestJobManager] = None
+        self._ingest_recovered = False
         self._session_id = ""
         self._last_recall_count = 0
 
@@ -310,13 +312,19 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
     def initialize(self, session_id: str, **kwargs) -> None:
         self._session_id = session_id
         self._get_vault().ensure_skeleton()
+        if not self._ingest_recovered:
+            try:
+                self._get_ingest_manager().recover_unsubmitted_boundaries()
+            except Exception:
+                logger.debug("ObsidianWiki ingest recovery skipped", exc_info=True)
+            self._ingest_recovered = True
 
     def on_session_finalize(self, **kwargs) -> None:
-        """Queue the old session when the host rotates/resets it.
+        """Queue capture/extraction in the Hermes plugin process.
 
-        Gateway resets use ``on_session_finalize`` rather than
-        ``on_session_end``.  The hook intentionally only submits work; the
-        central ingest manager performs capture after state.db has flushed.
+        Extraction intentionally runs from the plugin-owned worker so it uses
+        Hermes' own Python environment and LLM runtime. The MCP/web processes
+        only read persisted ingest status and never execute extraction.
         """
         session_id = str(kwargs.get("session_id") or "")
         platform = str(kwargs.get("platform") or "")
@@ -328,18 +336,17 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                 "ObsidianWiki ingest boundary: event=on_session_finalize session=%s platform=%s",
                 session_id, platform or "unknown",
             )
-            _run_async(_call_mcp(
-                self._mcp_url(),
-                "memory_ingest_submit",
-                {"request_id": request_id, "session_id": session_id},
-            ))
+            job = self._get_ingest_manager().submit(
+                request_id=request_id,
+                session_id=session_id,
+            )
             logger.info(
-                "ObsidianWiki ingest submitted: event=on_session_finalize session=%s request_id=%s",
-                session_id, request_id,
+                "ObsidianWiki plugin ingest queued: event=on_session_finalize session=%s request_id=%s job_id=%s",
+                session_id, request_id, job.get("job_id", ""),
             )
         except Exception:
             logger.warning(
-                "ObsidianWiki ingest submission failed: event=on_session_finalize session=%s",
+                "ObsidianWiki plugin ingest submission failed: event=on_session_finalize session=%s",
                 session_id, exc_info=True,
             )
 
@@ -364,6 +371,22 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
             self._store = MemoryStore(vault_path(self._config))
             self._vault = self._store.vault
         return self._vault
+
+    def _ingest_job_db_path(self) -> Path:
+        configured = self._config.get("ingest_job_db") or os.environ.get("WIKI_JOB_DB")
+        return Path(str(configured)).expanduser() if configured else _PLUGIN_DIR / ".state" / "jobs.db"
+
+    def _get_ingest_manager(self) -> IngestJobManager:
+        if self._ingest_manager is None:
+            store = self._store or MemoryStore(vault_path(self._config))
+            self._store = store
+            self._vault = store.vault
+            self._ingest_manager = IngestJobManager(
+                store,
+                plugin_root=_PLUGIN_DIR,
+                state_path=self._ingest_job_db_path(),
+            )
+        return self._ingest_manager
 
     # ------------------------------------------------------------------
     # Config surface (desktop generic panel)
@@ -409,6 +432,11 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                 "description": "Obsidian Wiki MCP Streamable HTTP endpoint",
                 "default": _MCP_DEFAULT_URL,
             },
+            {
+                "key": "ingest_job_db",
+                "description": "Plugin-owned ingest status database path",
+                "default": str(_PLUGIN_DIR / ".state" / "jobs.db"),
+            },
         ]
 
     def _mcp_enabled(self) -> bool:
@@ -450,6 +478,8 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
                 yaml.dump(existing, fh, default_flow_style=False)
             self._config = dict(values)
             self._vault = None
+            self._ingest_manager = None
+            self._ingest_recovered = False
         except Exception as e:
             logger.warning("obsidianwiki save_config failed: %s", e)
 

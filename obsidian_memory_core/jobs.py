@@ -1,4 +1,4 @@
-"""Central ingest job queue for one memory-server process."""
+"""Plugin-owned ingest queue plus read-only status access."""
 from __future__ import annotations
 
 import json
@@ -152,12 +152,9 @@ class IngestJobManager:
 
     @staticmethod
     def _runtime_python() -> str:
-        """Use Hermes' virtualenv for detached scripts and their dependencies."""
+        """Use the current Hermes/plugin interpreter unless explicitly overridden."""
         configured = os.environ.get("HERMES_PYTHON")
-        if configured:
-            return configured
-        candidate = _hermes_home() / "hermes-agent" / "venv" / "bin" / "python3"
-        return str(candidate) if candidate.is_file() else sys.executable
+        return configured or sys.executable
 
     def _set(self, job_id: str, **fields: Any) -> None:
         with self._lock:
@@ -217,6 +214,46 @@ class IngestJobManager:
                     self._running = None
 
 
+class IngestJobReader:
+    """Read persisted ingest status without owning or starting any workers."""
+
+    def __init__(self, state_path: Path | None = None):
+        self.state_path = state_path or Path(os.environ.get("WIKI_JOB_DB") or _default_job_db_path())
+
+    def status(self, job_id: str | None = None) -> dict[str, Any]:
+        if not self.state_path.is_file():
+            if job_id:
+                return {"error": "job_not_found", "job_id": job_id}
+            return {"running": None, "jobs": []}
+
+        conn = sqlite3.connect(f"file:{self.state_path}?mode=ro", uri=True)
+        try:
+            if job_id:
+                row = conn.execute(
+                    "SELECT payload FROM jobs WHERE job_id=?", (job_id,)
+                ).fetchone()
+                if not row:
+                    return {"error": "job_not_found", "job_id": job_id}
+                return json.loads(row[0])
+
+            rows = conn.execute(
+                "SELECT payload FROM jobs ORDER BY rowid DESC LIMIT 50"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            if job_id:
+                return {"error": "job_not_found", "job_id": job_id}
+            return {"running": None, "jobs": []}
+        finally:
+            conn.close()
+
+        jobs = [json.loads(payload) for (payload,) in reversed(rows)]
+        running = next(
+            (job.get("job_id") for job in reversed(jobs) if job.get("status") == "running"),
+            None,
+        )
+        return {"running": running, "jobs": jobs}
+
+
 def load_manager(vault_path: str) -> IngestJobManager:
     store = MemoryStore(vault_path)
     store.ensure_ready()
@@ -227,4 +264,4 @@ def json_status(manager: IngestJobManager) -> str:
     return json.dumps(manager.status(), ensure_ascii=False)
 
 
-__all__ = ["IngestJobManager", "load_manager", "json_status"]
+__all__ = ["IngestJobManager", "IngestJobReader", "load_manager", "json_status"]

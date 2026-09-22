@@ -132,6 +132,20 @@ class TestIngestJobManager:
 
         assert jobs.IngestJobManager._capture_retry_delays() == (0, 3, 10, 30)
 
+    def test_runtime_python_defaults_to_current_plugin_interpreter(self, monkeypatch):
+        from obsidian_memory_core import jobs
+
+        monkeypatch.delenv("HERMES_PYTHON", raising=False)
+        assert jobs.IngestJobManager._runtime_python() == sys.executable
+
+    def test_status_reader_never_creates_or_runs_jobs(self, tmp_path):
+        from obsidian_memory_core.jobs import IngestJobReader
+
+        state_path = tmp_path / "missing" / "jobs.db"
+        reader = IngestJobReader(state_path)
+        assert reader.status() == {"running": None, "jobs": []}
+        assert not state_path.exists()
+
     def test_extractor_uses_hermes_python_when_system_python_is_selected(self, tmp_path, monkeypatch):
         from obsidian_memory_core import jobs
 

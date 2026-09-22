@@ -98,8 +98,9 @@ Vite proxies `/api` requests to `http://127.0.0.1:8787`.
 ### Docker Compose
 
 The Compose stack runs the MCP server and web workspace as separate processes
-from the same image. They share the vault and persisted ingest job database,
-while the MCP service remains the only ingest worker owner.
+from the same image. Ingest execution is **not** owned by Docker: the Hermes
+plugin captures sessions and runs extraction in the Hermes process environment.
+Docker mounts `.state/jobs.db` read-only so MCP/web can display ingest status.
 
 With the existing required paths configured in `.env`, build and start both:
 
@@ -324,26 +325,26 @@ When the `on_session_end` shell hook is configured, the flow is:
 Hermes reports a completed session
               |
               v
-       wiki_turn_hook.py
+   ObsidianWiki plugin hook
               |
-              +--> MCP memory_ingest_submit
+              +--> plugin-owned ingest queue
                               |
-                              v
-                    central memory server
-                              |
-                              +--> capture
-                              +--> extract/dedup
+                              +--> capture from Hermes state.db
+                              +--> extract/dedup with Hermes LLM runtime
                               +--> write curated pages
                               |
                               v
                          agent-vault
+
+MCP/web only read `.state/jobs.db` to display ingest status.
 ```
 
-`wiki_turn_hook.py` is invoked after a **completed session**, not after every
-individual chat turn. It submits an idempotent ingest request to the local
-Obsidian Memory MCP server; the server owns capture, extraction, deduplication,
-locking, and vault writes. It skips cron sessions and exits successfully on
-errors so memory ingestion cannot break the main agent response.
+The installed plugin registers `on_session_end` and `on_session_finalize`
+directly with Hermes. At a completed non-cron session boundary it submits an
+idempotent job to the plugin-owned worker. That worker runs with the same Hermes
+Python/runtime, so `agent.oneshot` and Hermes LLM configuration stay local to
+Hermes instead of being packaged into the MCP container. `wiki_turn_hook.py`
+remains only as a legacy shell-hook fallback and queues the same local worker.
 
 All generated `tags` and `aliases` are rendered as YAML block lists with single-quoted scalars. This safely preserves values containing `#`, `:`, brackets, commas, quotes, Unicode, or leading YAML-significant characters.
 
@@ -450,19 +451,18 @@ artifacts.
 
 | Operation | Automatic by the Hermes plugin? | Manual command available? |
 |-----------|----------------------------------|---------------------------|
-| Capture a completed Hermes session | Yes, via the configured hook and MCP ingest server | Yes |
-| Extract durable knowledge | Yes, via the MCP ingest worker after hook submission | Yes |
-| Process an old backlog | No | Yes, `wiki_backlog_extract.py` or MCP ingest |
+| Capture a completed Hermes session | Yes, via the plugin session-boundary hooks | Yes |
+| Extract durable knowledge | Yes, via the plugin-owned ingest worker | Yes |
+| Process an old backlog | No | Yes, `wiki_backlog_extract.py` or the local submit script |
 | Show backlog status | No | Yes, `wiki_backlog_status.py` or `memory_ingest_status` |
 | Run the full wrapper | No | Yes, `wiki_ingest.sh` |
-| MCP read/write/reflect memory | No passive capture; MCP exposes memory operations, reflection, and ingest tools | Yes, through any MCP client |
+| MCP read/write/reflect memory | No passive capture; MCP exposes memory operations plus read-only ingest status | Yes, through any MCP client |
 
-The plugin integrates completed Hermes sessions only through the configured
-hook. The hook is a thin MCP client and does not write the vault itself. The
-standalone MCP server does not passively listen for Hermes conversations; it
-processes sessions when the hook submits `memory_ingest_submit`, and provides
-memory read/search/list/lint/log/write operations for Codex, Claude Code, AGY,
-and other MCP clients.
+The plugin owns completed-session capture and extraction. The standalone MCP
+server never launches ingest jobs and does not need access to Hermes `state.db`
+or the Hermes Python package. It provides memory read/search/list/lint/log/write
+operations for Codex, Claude Code, AGY, and other MCP clients, plus a read-only
+`memory_ingest_status` view over the plugin's persisted job database.
 
 ### Central server mode for multiple Hermes profiles
 
@@ -476,11 +476,10 @@ Hermes profile B ─┼── http://127.0.0.1:8765/mcp
 Hermes profile C ─┘             │
                                ▼
                     one obsidian-memory server
-                               │
-                    central ingest job worker
-                               │
-                               ▼
-                         agent-vault
+                         (memory APIs only)
+
+Each Hermes plugin instance owns extraction for its own completed sessions;
+vault writes remain concurrency-safe through the shared store lock/revisions.
 ```
 
 Start the central server once:
@@ -501,21 +500,14 @@ mcp_servers:
     connect_timeout: 10
 ```
 
-The server exposes `memory_ingest_submit` and `memory_ingest_status` in
-addition to the memory read/write tools. `memory_ingest_submit` accepts an
-optional `request_id`; retrying the same request ID returns the original job
-instead of creating a duplicate. The server serializes ingest jobs in one
-worker and sends capture/extraction output through the server-owned vault
-configuration. `wiki_turn_hook.py` is now a thin event client that submits a
-completed-session job instead of writing the vault itself.
+The server exposes `memory_ingest_status` as a read-only monitoring tool; it
+has no `memory_ingest_submit` tool. Job/request metadata is written by the
+plugin to `.state/jobs.db` by default. Docker bind-mounts that directory
+read-only at `/ingest-state`, so Operations can monitor jobs without owning or
+executing them.
 
-Job/request metadata is persisted in the server's local `WIKI_JOB_DB`.
-When unset, it uses the platform's standard per-user state directory, so a
-repeated `request_id` remains idempotent after a server restart. Runtime job
-state is deliberately kept outside the iCloud vault.
-
-For this mode, replace the hook command in every profile with the same hook
-and set `OBSIDIAN_MEMORY_MCP_URL` if the server uses another local endpoint:
+Normally no shell hook is required because the plugin registers session-boundary
+hooks directly. For older Hermes installs that still require a shell hook, use:
 
 ```yaml
 hooks:
@@ -735,12 +727,12 @@ obsidian_memory_core
 ```
 
 The MCP adapter supports `memory_search`, `memory_read`, `memory_list`,
-`memory_reflect`, `memory_lint`, `memory_log`, `memory_write`,
-`memory_ingest_submit`, and `memory_ingest_status` (9 tools). Reflection uses
-the configured Hermes or Codex provider. Hermes-backed reflection uses the shared
-`run_oneshot` runtime; Codex-backed reflection reads the existing Codex CLI
-session described above. Ingest jobs are serialized by one central
-worker; writes use an exclusive lock and require an `expected_revision` SHA-256
+`memory_reflect`, `memory_lint`, `memory_log`, `memory_write`, `memory_append`,
+and read-only `memory_ingest_status`. Reflection uses the configured Hermes or
+Codex provider. Hermes-backed reflection uses the shared `run_oneshot` runtime;
+Codex-backed reflection reads the existing Codex CLI session described above.
+Ingest execution stays in the Hermes plugin; writes use an exclusive lock and
+require an `expected_revision` SHA-256
 check when updating an existing page, rejecting stale updates from concurrent
 agents. Never store credentials, API keys,
 tokens, or passwords in the vault.
@@ -913,8 +905,7 @@ possible.
 | `memory_log` | optional `limit` | Return recent operation logs |
 | `memory_write` | `page`, `content`, optional `note`, `expected_revision` | Create or safely update a page; use read-then-write for existing pages |
 | `memory_append` | `page`, `content`, optional `note`, `expected_revision` | Append a validated section to an existing page |
-| `memory_ingest_submit` | optional `request_id`, `session_id` | Queue centralized session capture/extraction |
-| `memory_ingest_status` | optional `job_id` | Inspect an ingest job or recent jobs |
+| `memory_ingest_status` | optional `job_id` | Read plugin-owned ingest job status; never executes extraction |
 
 ### Safe write workflow
 

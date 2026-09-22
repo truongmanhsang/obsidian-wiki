@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fastmcp
 from fastmcp import FastMCP
 
-from obsidian_memory_core import IngestJobManager, InvalidRevisionFormat, MemoryStore, RevisionConflict, MemoryWriteError
+from obsidian_memory_core import IngestJobReader, InvalidRevisionFormat, MemoryStore, RevisionConflict, MemoryWriteError
 from obsidian_memory_core.config import vault_path
 from obsidian_memory_core.wiki import StructureValidationError
 
@@ -28,7 +28,7 @@ mcp = FastMCP("obsidian-memory")
 # a transport retained by the server's stateful session registry.  MCP SDK
 # 1.30.0 also removes stateful transports immediately after DELETE.
 fastmcp.settings.stateless_http = True
-_manager: IngestJobManager | None = None
+_ingest_status_reader: IngestJobReader | None = None
 
 
 def _run_reflection(query: str, pages: list[dict[str, Any]]) -> str:
@@ -76,17 +76,11 @@ def _store(prepare: bool = False) -> MemoryStore:
     return store
 
 
-def _ingest_manager() -> IngestJobManager:
-    global _manager
-    if _manager is None:
-        _manager = IngestJobManager(_store(prepare=True))
-        # Recover session_reset boundaries missed while Hermes or this server
-        # was restarting. Recovery is idempotent and runs once per process.
-        try:
-            _manager.recover_unsubmitted_boundaries()
-        except Exception:
-            pass
-    return _manager
+def _ingest_reader() -> IngestJobReader:
+    global _ingest_status_reader
+    if _ingest_status_reader is None:
+        _ingest_status_reader = IngestJobReader()
+    return _ingest_status_reader
 
 
 @mcp.tool()
@@ -240,15 +234,9 @@ def memory_delete(page: str, expected_revision: str | None = None, note: str = "
 
 
 @mcp.tool()
-def memory_ingest_submit(request_id: str | None = None, session_id: str | None = None) -> dict[str, Any]:
-    """Queue centralized session capture and extraction; safe to retry with request_id."""
-    return _ingest_manager().submit(request_id=request_id, session_id=session_id)
-
-
-@mcp.tool()
 def memory_ingest_status(job_id: str | None = None) -> dict[str, Any]:
-    """Return the status of one ingest job or recent centralized ingest jobs."""
-    return _ingest_manager().status(job_id)
+    """Read plugin-owned ingest job status without starting workers."""
+    return _ingest_reader().status(job_id)
 
 
 def main() -> None:

@@ -17,7 +17,7 @@ from starlette.staticfiles import StaticFiles
 
 from obsidian_memory_core import MemoryStore
 from obsidian_memory_core.config import vault_path as configured_vault_path
-from obsidian_memory_core.jobs import IngestJobManager
+from obsidian_memory_core.jobs import IngestJobReader
 from obsidian_memory_core.store import MemoryWriteError
 
 
@@ -48,7 +48,7 @@ def _store(request: Request) -> MemoryStore:
     return request.app.state.store
 
 
-def _ingest(request: Request) -> IngestJobManager:
+def _ingest(request: Request) -> IngestJobReader:
     return request.app.state.ingest_manager
 
 
@@ -217,7 +217,7 @@ def create_web_app(vault_path: str | None = None) -> Starlette:
 
     app = Starlette(routes=routes)
     app.state.store = store
-    app.state.ingest_manager = IngestJobManager(store)
+    app.state.ingest_manager = IngestJobReader()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],

@@ -32,7 +32,7 @@ COPY --from=web-build /web/dist /app/web/dist
 
 # Set necessary environment variables
 ENV OBSIDIAN_VAULT_PATH=/vault
-ENV WIKI_JOB_DB=/data/jobs.db
+ENV WIKI_JOB_DB=/ingest-state/jobs.db
 
 # Expose the standard port
 EXPOSE 8765 8787

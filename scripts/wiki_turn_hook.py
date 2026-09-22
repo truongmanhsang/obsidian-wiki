@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
-"""Submit completed Hermes sessions to the central memory MCP server.
+"""Legacy Hermes session-boundary hook for plugin-owned ingest.
 
-This hook is intentionally a thin client. It never writes the vault directly;
-the single memory-server process owns capture, extraction, locking, and writes.
+The installed plugin already registers on_session_end/on_session_finalize hooks,
+so this script is only for Hermes installations that still use shell hooks.
+It queues the same local plugin worker and never sends extraction to MCP.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import sys
-MCP_URL = os.environ.get("OBSIDIAN_MEMORY_MCP_URL", "http://127.0.0.1:8765/mcp")
+from pathlib import Path
+
+PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+
+from obsidian_memory_core import IngestJobManager, MemoryStore
+from obsidian_memory_core.config import vault_path
 
 
 def log(message: str) -> None:
@@ -18,33 +25,30 @@ def log(message: str) -> None:
 
 
 def append_audit(message: str) -> None:
-    """Keep hook diagnostics durable when stderr is not retained by launchd."""
     try:
         path = os.path.expanduser("~/.hermes/logs/obsidianwiki-ingest-hook.log")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(message + "\n")
     except Exception:
         pass
 
 
-async def submit(session_id: str) -> None:
-    from mcp import ClientSession
-    from mcp.client.streamable_http import streamablehttp_client
-
-    async with streamablehttp_client(MCP_URL) as (read, write, _):
-        async with ClientSession(read, write) as client:
-            await client.initialize()
-            await client.call_tool(
-                "memory_ingest_submit",
-                {
-                    "request_id": f"{session_id}:completed",
-                    "session_id": session_id,
-                },
-            )
+def submit(session_id: str) -> dict:
+    store = MemoryStore(vault_path())
+    store.ensure_ready()
+    manager = IngestJobManager(
+        store,
+        plugin_root=PLUGIN_ROOT,
+        state_path=PLUGIN_ROOT / ".state" / "jobs.db",
+    )
+    return manager.submit(
+        request_id=f"{session_id}:completed",
+        session_id=session_id,
+    )
 
 
 def main() -> int:
-    # Ingest is enabled by default for every completed non-cron session.
     try:
         payload = json.load(sys.stdin) if not sys.stdin.isatty() else {}
     except Exception:
@@ -55,16 +59,16 @@ def main() -> int:
     platform = str(payload.get("platform", extra.get("platform", "")) or "")
     if not completed or session_id.startswith("cron_") or platform == "cron":
         return 0
+
     event = f"session={session_id} platform={platform or 'unknown'}"
     append_audit(f"boundary received {event}")
     try:
-        asyncio.run(submit(session_id))
-        message = f"ingest job submitted {event}"
+        job = submit(session_id)
+        message = f"plugin ingest queued {event} job_id={job.get('job_id', '')}"
         log(message)
         append_audit(message)
     except Exception as exc:
-        # Hooks fail open: an unavailable server must not break Hermes.
-        message = f"ingest submit failed {event}: {exc}"
+        message = f"plugin ingest submit failed {event}: {exc}"
         log(message)
         append_audit(message)
     return 0

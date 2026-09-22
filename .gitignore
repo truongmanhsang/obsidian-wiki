@@ -26,3 +26,6 @@ log.db-*
 
 # Web workspace dependencies
 web/node_modules/
+
+# Plugin-owned runtime ingest status
+.state/

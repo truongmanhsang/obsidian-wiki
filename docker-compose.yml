@@ -9,8 +9,8 @@ services:
     environment:
       # Internal mount path mapped to the vault below
       - OBSIDIAN_VAULT_PATH=/vault
-      # Internal path for the job queue SQLite database
-      - WIKI_JOB_DB=/data/jobs.db
+      # Read-only status DB written by the Hermes plugin on the host.
+      - WIKI_JOB_DB=/ingest-state/jobs.db
       # Multilingual semantic index; override in .env for a different model.
       - OBSIDIAN_WIKI_EMBEDDING_MODEL=${OBSIDIAN_WIKI_EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
       - OBSIDIAN_WIKI_EMBEDDING_THRESHOLD=${OBSIDIAN_WIKI_EMBEDDING_THRESHOLD:-0.25}
@@ -21,10 +21,8 @@ services:
     volumes:
       # Set OBSIDIAN_VAULT_HOST_PATH to the host vault before starting.
       - ${OBSIDIAN_VAULT_HOST_PATH:?Set OBSIDIAN_VAULT_HOST_PATH to the host vault}:/vault
-      # Persist the job database outside the container
-      - obsidian-memory-data:/data
-      # Read Hermes session state for the centralized ingest worker.
-      - ${HERMES_STATE_DB_HOST_PATH:?Set HERMES_STATE_DB_HOST_PATH to the host Hermes state database}:/root/.hermes/state.db:ro
+      # Ingest is owned by the Hermes plugin; MCP only reads its status DB.
+      - ./.state:/ingest-state:ro
       # Read the existing Codex CLI login; Codex CLI owns token refreshes.
       - ${CODEX_AUTH_HOST_PATH:?Set CODEX_AUTH_HOST_PATH to the Codex CLI auth file}:/root/.codex/auth.json:ro
     healthcheck:
@@ -56,17 +54,16 @@ services:
       - "127.0.0.1:8787:8787"
     environment:
       - OBSIDIAN_VAULT_PATH=/vault
-      - WIKI_JOB_DB=/data/jobs.db
+      - WIKI_JOB_DB=/ingest-state/jobs.db
       - OBSIDIAN_WIKI_EMBEDDING_MODEL=${OBSIDIAN_WIKI_EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
       - OBSIDIAN_WIKI_EMBEDDING_THRESHOLD=${OBSIDIAN_WIKI_EMBEDDING_THRESHOLD:-0.25}
       - OBSIDIAN_MEMORY_REFLECT_PROVIDER=${OBSIDIAN_MEMORY_REFLECT_PROVIDER:-hermes}
       - OBSIDIAN_MEMORY_REFLECT_MODEL=${OBSIDIAN_MEMORY_REFLECT_MODEL:-}
       - CODEX_AUTH_PATH=/root/.codex/auth.json
     volumes:
-      # The web process reads the same canonical vault and persisted ingest state.
-      # It exposes no ingest-submit endpoint; the MCP process remains the worker owner.
+      # The web process reads the same canonical vault and plugin-owned ingest status.
       - ${OBSIDIAN_VAULT_HOST_PATH:?Set OBSIDIAN_VAULT_HOST_PATH to the host vault}:/vault
-      - obsidian-memory-data:/data
+      - ./.state:/ingest-state:ro
       - ${CODEX_AUTH_HOST_PATH:?Set CODEX_AUTH_HOST_PATH to the Codex CLI auth file}:/root/.codex/auth.json:ro
     healthcheck:
       test:
@@ -77,6 +74,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-
-volumes:
-  obsidian-memory-data:

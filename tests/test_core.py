@@ -24,33 +24,62 @@ def test_default_vault_path_is_portable(monkeypatch, tmp_path):
     assert config.default_vault_path() == str(tmp_path / "Documents" / "agent-vault")
 
 
-def test_session_finalize_queues_old_session_without_cron(monkeypatch):
+def test_session_finalize_queues_old_session_in_plugin_worker(monkeypatch):
     module = _load_module()
-    provider = module.ObsidianWikiMemoryProvider({"mcp_url": "http://127.0.0.1:8765/mcp"})
+    provider = module.ObsidianWikiMemoryProvider()
     calls = []
-    monkeypatch.setattr(module, "_run_async", lambda coro: calls.append(coro))
+
+    class Manager:
+        def submit(self, request_id=None, session_id=None):
+            calls.append((request_id, session_id))
+            return {"job_id": "ingest-local"}
+
+    monkeypatch.setattr(provider, "_get_ingest_manager", lambda: Manager())
     provider.on_session_finalize(session_id="session-1", platform="telegram")
-    assert len(calls) == 1
-    calls[0].close()
+    assert calls == [("session-1:completed", "session-1")]
 
 
 def test_session_finalize_ignores_cron(monkeypatch):
     module = _load_module()
     provider = module.ObsidianWikiMemoryProvider()
-    monkeypatch.setattr(module, "_run_async", lambda coro: (_ for _ in ()).throw(AssertionError()))
+    monkeypatch.setattr(provider, "_get_ingest_manager", lambda: (_ for _ in ()).throw(AssertionError()))
     provider.on_session_finalize(session_id="cron_job_1", platform="cron")
 
 
 def test_session_end_queues_completed_old_session(monkeypatch):
     module = _load_module()
-    provider = module.ObsidianWikiMemoryProvider({"mcp_url": "http://127.0.0.1:8765/mcp"})
+    provider = module.ObsidianWikiMemoryProvider()
     calls = []
-    monkeypatch.setattr(module, "_run_async", lambda coro: calls.append(coro))
+
+    class Manager:
+        def submit(self, request_id=None, session_id=None):
+            calls.append((request_id, session_id))
+            return {"job_id": "ingest-local"}
+
+    monkeypatch.setattr(provider, "_get_ingest_manager", lambda: Manager())
     provider.on_session_end(
         session_id="session-2", completed=True, platform="telegram",
     )
-    assert len(calls) == 1
-    calls[0].close()
+    assert calls == [("session-2:completed", "session-2")]
+
+
+def test_initialize_recovers_boundaries_with_plugin_manager(monkeypatch, tmp_path):
+    module = _load_module()
+    provider = module.ObsidianWikiMemoryProvider({
+        "vault_path": str(tmp_path / "vault"),
+        "access_mode": "direct",
+    })
+    calls = []
+
+    class Manager:
+        def recover_unsubmitted_boundaries(self):
+            calls.append("recover")
+            return []
+
+    monkeypatch.setattr(provider, "_get_ingest_manager", lambda: Manager())
+    provider.initialize("session-a")
+    provider.initialize("session-b")
+    assert calls == ["recover"]
 
 
 def test_register_binds_both_boundary_hooks(monkeypatch):

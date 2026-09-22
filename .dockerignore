@@ -10,3 +10,5 @@ build
 dist
 web/node_modules
 web/dist
+
+.state
