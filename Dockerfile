@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml .
 
 # Install dependencies (fastmcp must be installed via the pyproject or directly if missing)
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e ".[server]"
 
 # Copy the rest of the server code
 COPY . .

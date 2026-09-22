@@ -108,6 +108,35 @@ class TestIngestJobManager:
         monkeypatch.delenv("LOCALAPPDATA", raising=False)
         assert jobs._default_job_db_path() == tmp_path / "Library" / "Application Support" / "obsidian-memory" / "jobs.db"
 
+    def test_submit_reclaims_stale_queued_and_running_jobs(self, tmp_path, monkeypatch):
+        from obsidian_memory_core.jobs import IngestJobManager
+        from obsidian_memory_core import MemoryStore
+
+        store = MemoryStore(tmp_path / "vault")
+        store.ensure_ready()
+        db = tmp_path / "jobs.db"
+        manager = IngestJobManager(store, state_path=db)
+        started = []
+        monkeypatch.setattr(manager, "_start_job", lambda job_id: started.append(job_id))
+
+        first = manager.submit(request_id="s1:completed", session_id="s1")
+        assert started == [first["job_id"]]
+        # Simulate process restart: persisted row says running but this manager
+        # has no active worker for it.
+        manager._active_job_ids.clear()
+        job = manager._jobs[first["job_id"]]
+        job["status"] = "running"
+        manager._db.execute(
+            "UPDATE jobs SET status='running', payload=? WHERE job_id=?",
+            (json.dumps(job), first["job_id"]),
+        )
+        manager._db.commit()
+        started.clear()
+
+        reclaimed = manager.submit(request_id="s1:completed", session_id="s1")
+        assert reclaimed["status"] == "queued"
+        assert started == [first["job_id"]]
+
     def test_completed_early_or_failed_jobs_are_retryable(self):
         from obsidian_memory_core.jobs import IngestJobManager
 

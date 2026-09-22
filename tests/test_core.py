@@ -35,7 +35,8 @@ def test_session_finalize_queues_old_session_in_plugin_worker(monkeypatch):
             return {"job_id": "ingest-local"}
 
     monkeypatch.setattr(provider, "_get_ingest_manager", lambda: Manager())
-    provider.on_session_finalize(session_id="session-1", platform="telegram")
+    provider.initialize("session-1")
+    provider.on_session_end([])
     assert calls == [("session-1:completed", "session-1")]
 
 
@@ -43,7 +44,8 @@ def test_session_finalize_ignores_cron(monkeypatch):
     module = _load_module()
     provider = module.ObsidianWikiMemoryProvider()
     monkeypatch.setattr(provider, "_get_ingest_manager", lambda: (_ for _ in ()).throw(AssertionError()))
-    provider.on_session_finalize(session_id="cron_job_1", platform="cron")
+    provider._session_id = "cron_job_1"
+    provider.on_session_end([])
 
 
 def test_session_end_queues_completed_old_session(monkeypatch):
@@ -57,9 +59,8 @@ def test_session_end_queues_completed_old_session(monkeypatch):
             return {"job_id": "ingest-local"}
 
     monkeypatch.setattr(provider, "_get_ingest_manager", lambda: Manager())
-    provider.on_session_end(
-        session_id="session-2", completed=True, platform="telegram",
-    )
+    provider.initialize("session-2")
+    provider.on_session_end([])
     assert calls == [("session-2:completed", "session-2")]
 
 
@@ -72,14 +73,22 @@ def test_initialize_recovers_boundaries_with_plugin_manager(monkeypatch, tmp_pat
     calls = []
 
     class Manager:
-        def recover_unsubmitted_boundaries(self):
-            calls.append("recover")
+        def resume_incomplete_jobs(self):
+            calls.append("resume")
             return []
 
     monkeypatch.setattr(provider, "_get_ingest_manager", lambda: Manager())
     provider.initialize("session-a")
     provider.initialize("session-b")
-    assert calls == ["recover"]
+    assert calls == ["resume"]
+
+
+def test_session_switch_rebinds_provider_session(monkeypatch):
+    module = _load_module()
+    provider = module.ObsidianWikiMemoryProvider()
+    provider._session_id = "old-session"
+    provider.on_session_switch("new-session", reset=True)
+    assert provider._session_id == "new-session"
 
 
 def test_register_binds_both_boundary_hooks(monkeypatch):
@@ -94,7 +103,7 @@ def test_register_binds_both_boundary_hooks(monkeypatch):
             calls.append((name, callback.__name__))
 
     module.register(Context())
-    assert [name for name, _ in calls] == ["on_session_end", "on_session_finalize"]
+    assert [name for name, _ in calls] == ["on_session_finalize"]
 
 
 def test_schema_instructs_direct_wrapper(monkeypatch, tmp_path):

@@ -314,50 +314,58 @@ class ObsidianWikiMemoryProvider(MemoryProvider):
         self._get_vault().ensure_skeleton()
         if not self._ingest_recovered:
             try:
-                self._get_ingest_manager().recover_unsubmitted_boundaries()
+                self._get_ingest_manager().resume_incomplete_jobs()
             except Exception:
-                logger.debug("ObsidianWiki ingest recovery skipped", exc_info=True)
+                logger.debug("ObsidianWiki ingest resume skipped", exc_info=True)
             self._ingest_recovered = True
 
-    def on_session_finalize(self, **kwargs) -> None:
-        """Queue capture/extraction in the Hermes plugin process.
-
-        Extraction intentionally runs from the plugin-owned worker so it uses
-        Hermes' own Python environment and LLM runtime. The MCP/web processes
-        only read persisted ingest status and never execute extraction.
-        """
-        session_id = str(kwargs.get("session_id") or "")
-        platform = str(kwargs.get("platform") or "")
+    def _queue_session_ingest(self, session_id: str, *, platform: str = "") -> None:
         if not session_id or session_id.startswith("cron_") or platform == "cron":
             return
+        request_id = f"{session_id}:completed"
+        logger.info(
+            "ObsidianWiki ingest boundary: session=%s platform=%s",
+            session_id, platform or "unknown",
+        )
+        job = self._get_ingest_manager().submit(
+            request_id=request_id, session_id=session_id,
+        )
+        logger.info(
+            "ObsidianWiki plugin ingest queued: session=%s request_id=%s job_id=%s status=%s",
+            session_id, request_id, job.get("job_id", ""), job.get("status", ""),
+        )
+
+    def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
+        """MemoryProvider boundary hook invoked by Hermes with transcript messages."""
+        del messages  # capture reads the canonical flushed session from Hermes state.db
         try:
-            request_id = f"{session_id}:completed"
-            logger.info(
-                "ObsidianWiki ingest boundary: event=on_session_finalize session=%s platform=%s",
-                session_id, platform or "unknown",
-            )
-            job = self._get_ingest_manager().submit(
-                request_id=request_id,
-                session_id=session_id,
-            )
-            logger.info(
-                "ObsidianWiki plugin ingest queued: event=on_session_finalize session=%s request_id=%s job_id=%s",
-                session_id, request_id, job.get("job_id", ""),
-            )
+            self._queue_session_ingest(self._session_id)
         except Exception:
             logger.warning(
-                "ObsidianWiki plugin ingest submission failed: event=on_session_finalize session=%s",
-                session_id, exc_info=True,
+                "ObsidianWiki plugin ingest submission failed: session=%s",
+                self._session_id, exc_info=True,
             )
 
-    def on_session_end(self, **kwargs) -> None:
-        """Submit completed sessions for hosts that emit only on_session_end."""
+    def on_session_switch(
+        self, new_session_id: str, *, parent_session_id: str = "",
+        reset: bool = False, rewound: bool = False, **kwargs,
+    ) -> None:
+        """Keep plugin state bound to Hermes' current session after /new/reset/resume."""
+        del parent_session_id, reset, rewound, kwargs
+        if new_session_id:
+            self._session_id = new_session_id
+
+    def on_session_finalize(self, **kwargs) -> None:
+        """Plugin lifecycle fallback for hard session finalization."""
         session_id = str(kwargs.get("session_id") or "")
         platform = str(kwargs.get("platform") or "")
-        completed = kwargs.get("completed", True)
-        if not session_id or session_id.startswith("cron_") or platform == "cron" or not completed:
-            return
-        self.on_session_finalize(**kwargs)
+        try:
+            self._queue_session_ingest(session_id, platform=platform)
+        except Exception:
+            logger.warning(
+                "ObsidianWiki finalize ingest submission failed: session=%s",
+                session_id, exc_info=True,
+            )
 
     def shutdown(self) -> None:
         self._store = None
@@ -911,5 +919,4 @@ def register(ctx) -> None:
     """Register the obsidianwiki provider and session-boundary hooks."""
     provider = ObsidianWikiMemoryProvider()
     ctx.register_memory_provider(provider)
-    ctx.register_hook("on_session_end", provider.on_session_end)
     ctx.register_hook("on_session_finalize", provider.on_session_finalize)

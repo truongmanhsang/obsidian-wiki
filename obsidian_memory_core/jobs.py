@@ -50,6 +50,7 @@ class IngestJobManager:
         self._jobs: dict[str, dict[str, Any]] = {}
         self._requests: dict[str, str] = {}
         self._running: str | None = None
+        self._active_job_ids: set[str] = set()
         self._worker_lock = threading.Lock()
 
     def recover_unsubmitted_boundaries(self, limit: int = 100) -> list[dict[str, Any]]:
@@ -82,38 +83,106 @@ class IngestJobManager:
             )
         return recovered
 
+    def _start_job(self, job_id: str) -> None:
+        """Start one job at most once in this process."""
+        with self._lock:
+            if job_id in self._active_job_ids:
+                return
+            self._active_job_ids.add(job_id)
+        threading.Thread(target=self._run, args=(job_id,), daemon=True).start()
+
     def submit(self, request_id: str | None = None, session_id: str | None = None) -> dict[str, Any]:
+        start_job_id: str | None = None
         with self._lock:
             if request_id:
-                row = self._db.execute("SELECT payload FROM jobs WHERE request_id=?", (request_id,)).fetchone()
+                row = self._db.execute(
+                    "SELECT payload FROM jobs WHERE request_id=?", (request_id,)
+                ).fetchone()
                 if row:
                     job = json.loads(row[0])
-                    if self._is_retryable_completed(job):
+                    job_id = job["job_id"]
+                    self._jobs[job_id] = job
+                    self._requests[request_id] = job_id
+                    status = str(job.get("status") or "")
+                    active_here = job_id in self._active_job_ids
+
+                    # queued/running rows are stale after a process restart.
+                    # Failed and retryable-completed jobs are safe to resubmit
+                    # under the same idempotency key. Never duplicate a thread
+                    # that is already active in this process.
+                    retry = (
+                        (status in {"queued", "running"} and not active_here)
+                        or status == "failed"
+                        or self._is_retryable_completed(job)
+                    )
+                    if retry:
                         job["status"] = "queued"
+                        job.pop("started_at", None)
+                        job.pop("finished_at", None)
+                        job.pop("error", None)
                         job["resubmitted_at"] = self._now()
-                        self._jobs[job["job_id"]] = job
                         self._db.execute(
                             "UPDATE jobs SET status=?, payload=? WHERE job_id=?",
-                            ("queued", json.dumps(job), job["job_id"]),
+                            ("queued", json.dumps(job), job_id),
                         )
                         self._db.commit()
-                        threading.Thread(target=self._run, args=(job["job_id"],), daemon=True).start()
+                        start_job_id = job_id
+                    else:
                         return job.copy()
-                    self._jobs[job["job_id"]] = job
-                    self._requests[request_id] = job["job_id"]
-                    return job.copy()
-            if request_id and request_id in self._requests:
-                return self._jobs[self._requests[request_id]].copy()
-            job_id = f"ingest-{uuid.uuid4().hex[:12]}"
-            job = {"job_id": job_id, "request_id": request_id, "session_id": session_id,
-                   "status": "queued", "submitted_at": self._now()}
-            self._jobs[job_id] = job
-            self._db.execute("INSERT INTO jobs(job_id, request_id, session_id, status, payload) VALUES (?, ?, ?, ?, ?)", (job_id, request_id, session_id, "queued", json.dumps(job)))
-            self._db.commit()
-            if request_id:
-                self._requests[request_id] = job_id
-            threading.Thread(target=self._run, args=(job_id,), daemon=True).start()
-            return job.copy()
+                else:
+                    job_id = f"ingest-{uuid.uuid4().hex[:12]}"
+                    job = {
+                        "job_id": job_id, "request_id": request_id,
+                        "session_id": session_id, "status": "queued",
+                        "submitted_at": self._now(),
+                    }
+                    self._jobs[job_id] = job
+                    self._requests[request_id] = job_id
+                    self._db.execute(
+                        "INSERT INTO jobs(job_id, request_id, session_id, status, payload) VALUES (?, ?, ?, ?, ?)",
+                        (job_id, request_id, session_id, "queued", json.dumps(job)),
+                    )
+                    self._db.commit()
+                    start_job_id = job_id
+            else:
+                job_id = f"ingest-{uuid.uuid4().hex[:12]}"
+                job = {
+                    "job_id": job_id, "request_id": None,
+                    "session_id": session_id, "status": "queued",
+                    "submitted_at": self._now(),
+                }
+                self._jobs[job_id] = job
+                self._db.execute(
+                    "INSERT INTO jobs(job_id, request_id, session_id, status, payload) VALUES (?, ?, ?, ?, ?)",
+                    (job_id, None, session_id, "queued", json.dumps(job)),
+                )
+                self._db.commit()
+                start_job_id = job_id
+
+            result = self._jobs[start_job_id].copy() if start_job_id else job.copy()
+
+        if start_job_id:
+            self._start_job(start_job_id)
+        return result
+
+    def resume_incomplete_jobs(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Restart persisted queued/running jobs after a Hermes process restart.
+
+        This deliberately does not scan Hermes state.db for historical sessions;
+        old backlog extraction remains an explicit/manual operation.
+        """
+        rows = self._db.execute(
+            "SELECT payload FROM jobs WHERE status IN ('queued','running') ORDER BY rowid ASC LIMIT ?",
+            (max(1, min(limit, 500)),),
+        ).fetchall()
+        resumed: list[dict[str, Any]] = []
+        for (payload,) in rows:
+            job = json.loads(payload)
+            resumed.append(self.submit(
+                request_id=job.get("request_id"),
+                session_id=job.get("session_id"),
+            ))
+        return resumed
 
     @staticmethod
     def _is_retryable_completed(job: dict[str, Any]) -> bool:
@@ -210,6 +279,7 @@ class IngestJobManager:
         finally:
             self._worker_lock.release()
             with self._lock:
+                self._active_job_ids.discard(job_id)
                 if self._running == job_id:
                     self._running = None
 
