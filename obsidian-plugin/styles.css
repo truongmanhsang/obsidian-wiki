@@ -126,7 +126,7 @@
 .memory-card-open:focus-visible,
 .memory-retry:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--interactive-accent);
+  box-shadow: inset 0 0 0 2px var(--interactive-accent);
 }
 
 .memory-toolbar input:focus,
@@ -136,7 +136,7 @@
 .memory-retry:focus {
   outline: none;
   border-color: var(--interactive-accent);
-  box-shadow: 0 0 0 2px var(--interactive-accent);
+  box-shadow: inset 0 0 0 2px var(--interactive-accent);
 }
 
 .memory-search-source-toggle {
