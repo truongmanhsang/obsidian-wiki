@@ -26,7 +26,13 @@ const makeView = (callTool: ReturnType<typeof vi.fn>) => {
 describe("MemoryWorkspaceView", () => {
   it("renders tabs and displays search results", async () => {
     const callTool = vi.fn().mockResolvedValue({
-      results: [{ path: "concepts/example.md", title: "Example", excerpt: "A useful fact" }],
+      results: [{
+        path: "concepts/example.md",
+        title: "Example",
+        snippet: "A useful fact",
+        score: 0.92,
+        match: "exact",
+      }],
     });
     const { view } = makeView(callTool);
     await view.onOpen();
@@ -40,11 +46,19 @@ describe("MemoryWorkspaceView", () => {
     const sources = view.containerEl.querySelector<HTMLInputElement>(".memory-search-sources")!;
     expect(sources).toBeTruthy();
     expect(sources.checked).toBe(false);
-    sources.checked = true;
     view.containerEl.querySelector<HTMLFormElement>(".memory-toolbar")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(callTool).toHaveBeenCalledWith("memory_search", expect.objectContaining({ query: "useful", include_sources: true }));
+    expect(view.containerEl.querySelector(".memory-workspace-header")).toBeTruthy();
+    expect(view.containerEl.querySelector(".memory-search-toolbar")).toBeTruthy();
+    expect(view.containerEl.querySelector(".memory-results-count")).toBeTruthy();
+    expect(view.containerEl.querySelector(".memory-card-meta")).toBeTruthy();
+    expect(view.containerEl.textContent).toContain("Exact match");
+    expect(callTool).toHaveBeenCalledWith("memory_search", expect.objectContaining({
+      query: "useful",
+      include_sources: false,
+      precise: true,
+    }));
     expect(view.containerEl.textContent).toContain("concepts/example.md");
   });
 
@@ -63,6 +77,9 @@ describe("MemoryWorkspaceView", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(callTool).toHaveBeenCalledWith("memory_reflect", { query: "What workflow is recommended?", limit: 8 });
+    expect(view.containerEl.querySelector(".memory-reflect-output")?.getAttribute("aria-live")).toBe("polite");
+    expect(view.containerEl.querySelector(".memory-reflection-card")).toBeTruthy();
+    expect(view.containerEl.querySelector(".memory-sources-list")).toBeTruthy();
     expect(view.containerEl.textContent).toContain("The sources agree on a calm workflow.");
     expect(view.containerEl.textContent).toContain("decisions/workflow.md");
   });
@@ -75,6 +92,7 @@ describe("MemoryWorkspaceView", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(view.containerEl.textContent).toContain("MCP offline");
+    expect(view.containerEl.querySelector("[role='alert']")).toBeTruthy();
     expect(view.containerEl.querySelector(".memory-retry")).toBeTruthy();
   });
 });
