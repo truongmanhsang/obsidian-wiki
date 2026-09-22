@@ -55,6 +55,17 @@ Return ONLY a JSON array (no markdown fence). Each item:
   "reason": "why this is durable knowledge"
 }
 
+Required markdown structure for every curated page:
+- exactly one `# Title` H1 matching the page title
+- concept: `## Summary` or `## Overview`, plus `## Core Content` or `## Explanation`
+- decision: `## Context`, `## Decision`, `## Rationale`
+- answer: `## Answer` or `## Recommendation`, plus `## Evidence` or `## Basis`
+- entity: `## Overview` or `## Identity`, plus `## Details` or `## Facts`
+- person: `## Identity` or `## Overview`, plus `## Details` or `## Facts`
+- environment: `## Scope`, plus `## Configuration` or `## Facts`
+- preference: `## Preference`, plus `## Rationale`
+- every curated page MUST end with a non-empty `## Related` section containing wikilinks
+
 Rules:
 - update ONLY pages listed below; create only when no existing page covers it
 - max 6 items per batch; quality over quantity; empty array [] if nothing durable
