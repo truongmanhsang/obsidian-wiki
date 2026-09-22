@@ -31,6 +31,17 @@ def first_summary_line(body: str) -> str:
         return (s[:140] + "...") if len(s) > 140 else s
     return "(empty page)"
 
+
+def page_summary(page: dict) -> str:
+    """Prefer an explicit description, then fall back to body text."""
+    description = page.get("description")
+    if description is None:
+        description = page.get("meta", {}).get("description", "")
+    if isinstance(description, str) and description.strip():
+        value = description.strip()
+        return (value[:140] + "...") if len(value) > 140 else value
+    return first_summary_line(page.get("body", ""))
+
 def _existing_summaries(vault) -> dict[str, str]:
     try:
         text = vault.index_path.read_text(encoding="utf-8")
@@ -42,7 +53,6 @@ def _existing_summaries(vault) -> dict[str, str]:
     return result
 
 def rebuild_index(vault) -> None:
-    from .frontmatter import parse_frontmatter
     # Import constants lazily to avoid cycle
     from .vault import TYPE_DIRS, VALID_TYPES, SECTION_TITLES  # type: ignore
     old_summaries = _existing_summaries(vault)
@@ -93,7 +103,8 @@ def rebuild_index(vault) -> None:
         else:
             for page in plist:
                 key = page["rel"]
-                summary = old_summaries.get(key) or first_summary_line(page["body"])
+                description = page.get("description") or page.get("meta", {}).get("description", "")
+                summary = page_summary(page) if str(description).strip() else old_summaries.get(key) or page_summary(page)
                 parts.append(f"- [[{key}|{page['title']}]] - {summary}")
         parts.append("")
     vault.index_path.write_text("\n".join(parts), encoding="utf-8")

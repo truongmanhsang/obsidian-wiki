@@ -14,6 +14,7 @@ export interface SearchFilters {
 export interface SearchHit {
   path: string;
   title?: string;
+  description?: string;
   score?: number;
   excerpt?: string;
   snippet?: string;

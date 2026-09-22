@@ -35,6 +35,14 @@ def query_tokens(query: str) -> list[str]:
     return TOKEN_RE.findall(normalize_search(query))
 
 
+def page_description(page: dict) -> str:
+    """Return the optional page description as a clean display/search value."""
+    value = page.get("description", page.get("meta", {}).get("description", ""))
+    if isinstance(value, (dict, list, tuple, set)):
+        return ""
+    return str(value).strip() if value is not None else ""
+
+
 def _phrases(tokens: list[str]) -> list[str]:
     return [
         " ".join(tokens[i:i + size])

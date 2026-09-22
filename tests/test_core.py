@@ -1178,7 +1178,7 @@ class TestLint:
         second = vault.fix_orphans(dry_run=False)
         assert second["fixed"] == 0
 
-    def test_write_drops_removed_hub_metadata(self, provider):
+    def test_write_preserves_optional_metadata(self, provider):
         result = _call(
             provider,
             action="write",
@@ -1193,9 +1193,10 @@ class TestLint:
             ),
         )
         text = Path(result["path"]).read_text(encoding="utf-8")
-        assert "lint_hub" not in text
-        assert "lint_keywords" not in text
-        assert "lint_priority" not in text
+        assert "lint_hub: true" in text
+        assert "lint_keywords:" in text
+        assert "old-topic" in text
+        assert "lint_priority: 10" in text
 
     def test_orphan_and_broken_link_detected(self, provider):
         # lone page with a link to nowhere

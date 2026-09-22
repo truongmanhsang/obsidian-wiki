@@ -167,7 +167,7 @@ export class MemoryWorkspaceView extends ItemView {
       }
       card.appendChild(meta);
     }
-    const snippet = hit.excerpt ?? hit.snippet;
+    const snippet = hit.excerpt || hit.snippet || (typeof hit.description === "string" ? hit.description : "");
     if (snippet) card.appendChild(element("p", "memory-card-excerpt", snippet));
     const open = element("button", "memory-card-open", "Open page");
     const file = this.app.vault.getAbstractFileByPath(hit.path);

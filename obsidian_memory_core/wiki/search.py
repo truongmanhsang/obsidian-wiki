@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from typing import TypedDict
 
 from .links import TOKEN_RE, _alias_map
-from .intent import normalize_search, query_tokens
+from .intent import normalize_search, page_description, query_tokens
 
 
 class SearchFilters(TypedDict):
@@ -178,17 +178,20 @@ def search(vault, query: str, limit: int = 5, filters: Mapping | None = None) ->
         score = title_hits * 3 + body_hits + tag_hits * 2 + phrase_hits
         if score <= 0:
             continue
+        description = page_description(page)
         snippet = ""
         for line in page["body"].splitlines():
             line_low = normalize_search(line)
             if any(t in line_low for t in tokens) and len(line.strip()) > 3:
                 snippet = line.strip()[:180]
                 break
+        if not snippet:
+            snippet = description[:180]
         if page["ptype"] == "source":
             score = score / 10.0
             if score < 1:
                 continue
-        results.append({"path": page["rel"], "title": page["title"], "type": page["ptype"], "updated": page["updated"], "score": round(score, 1), "snippet": snippet})
+        results.append({"path": page["rel"], "title": page["title"], "type": page["ptype"], "updated": page["updated"], "description": description, "score": round(score, 1), "snippet": snippet})
     results.sort(key=lambda r: (-r["score"], r["title"].lower()))
     return results[:limit]
 

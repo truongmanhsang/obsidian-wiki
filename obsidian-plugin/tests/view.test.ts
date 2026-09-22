@@ -33,7 +33,7 @@ describe("MemoryWorkspaceView", () => {
       results: [{
         path: "concepts/example.md",
         title: "Example",
-        snippet: "A useful fact",
+        description: "A useful fact",
         score: 0.92,
         match: "exact",
       }],
@@ -67,6 +67,7 @@ describe("MemoryWorkspaceView", () => {
       precise: true,
     }));
     expect(view.containerEl.textContent).toContain("concepts/example.md");
+    expect(view.containerEl.textContent).toContain("A useful fact");
   });
 
   it("renders a reflection and its source labels", async () => {

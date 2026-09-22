@@ -11,9 +11,15 @@ from datetime import date
 from pathlib import Path
 
 from obsidian_memory_core.wiki.normalize import _normalize
-from obsidian_memory_core.wiki.frontmatter import FRONTMATTER_RE, parse_frontmatter, _parse_aliases_list, page_title
+from obsidian_memory_core.wiki.frontmatter import (
+    FRONTMATTER_RE,
+    parse_frontmatter,
+    serialize_frontmatter,
+    _parse_aliases_list,
+    page_title,
+)
 from obsidian_memory_core.wiki.links import WIKILINK_RE, TOKEN_RE, _alias_map, _out_links, _inbound_links
-from obsidian_memory_core.wiki.index import INDEX_HEADER, first_summary_line, _existing_summaries, rebuild_index as _rebuild_index_fn
+from obsidian_memory_core.wiki.index import INDEX_HEADER, first_summary_line, page_summary, _existing_summaries, rebuild_index as _rebuild_index_fn
 from obsidian_memory_core.wiki.log import LOG_HEADER, append_log as _append_log_fn, log_tail as _log_tail_fn, migrate_log_md_to_db, _ensure_db, _iter_log_rows  # noqa: F401
 from obsidian_memory_core.wiki.dedup import detect_duplicates as _detect_duplicates_fn
 from obsidian_memory_core.wiki.generation import generate_index_proposal
@@ -270,92 +276,12 @@ class WikiVault:
 
     @staticmethod
     def parse_frontmatter(text: str):
-        """Return ({flat keys}, body_without_frontmatter).
-
-        Correctly parses YAML lists for tags/aliases:
-        - inline: tags: [a, b]  or aliases: [Sang, Test]
-        - block:
-            tags:
-              - wiki
-              - index
-            aliases:
-              - Sang
-              - Truong Manh Sang
-        Other keys remain flat strings. List values are returned as Python lists.
-        """
-        meta: dict = {}
-        match = FRONTMATTER_RE.match(text)
-        body = text
-        if match:
-            body = text[match.end():]
-            fm_block = match.group(1)
-            lines = fm_block.splitlines()
-            current_list_key: str | None = None
-            for line in lines:
-                if not line.strip():
-                    continue
-                # If we are inside a block list, check for dash items first
-                if current_list_key is not None:
-                    m_dash = re.match(r"^\s*-\s*(.*)$", line)
-                    if m_dash is not None:
-                        item = m_dash.group(1).strip().strip("'\"")
-                        if item:
-                            if not isinstance(meta.get(current_list_key), list):
-                                meta[current_list_key] = []
-                            meta[current_list_key].append(item)
-                        continue
-                    # Not a dash line: determine if this is a new top-level key
-                    # Top-level keys start at column 0 and contain ':'
-                    if ":" in line and not line.startswith((" ", "\t", "-")):
-                        current_list_key = None
-                        # fall through to key handling
-                    else:
-                        # Indented non-dash line: continuation or noise -> skip
-                        if line.startswith((" ", "\t")):
-                            continue
-                        current_list_key = None
-                # Top-level key line
-                if ":" in line and not line.startswith((" ", "-", "\t")):
-                    key, _, value = line.partition(":")
-                    key = key.strip()
-                    value = value.strip()
-                    if key in ("tags", "aliases"):
-                        if value == "":
-                            meta[key] = []
-                            current_list_key = key
-                        elif value == "[]":
-                            meta[key] = []
-                            current_list_key = None
-                        elif value.startswith("[") and value.endswith("]"):
-                            inner = value[1:-1].strip()
-                            if not inner:
-                                meta[key] = []
-                            else:
-                                items: list[str] = []
-                                for part in inner.split(","):
-                                    p = part.strip().strip("'\"")
-                                    if p:
-                                        items.append(p)
-                                meta[key] = items
-                            current_list_key = None
-                        elif value:
-                            # Single scalar value for tags/aliases -> single-item list
-                            meta[key] = [value.strip().strip("'\"")]
-                            current_list_key = None
-                        else:
-                            meta[key] = []
-                            current_list_key = key
-                    else:
-                        meta[key] = value.strip().strip("'\"") if value else ""
-                        current_list_key = None
-        return meta, body
+        """Compatibility wrapper around the canonical safe YAML parser."""
+        return parse_frontmatter(text)
 
     @staticmethod
     def page_title(body: str, fallback: str) -> str:
-        for line in body.splitlines():
-            if line.startswith("# ") and len(line) > 2:
-                return line[2:].strip()
-        return fallback
+        return page_title(body, fallback)
 
     # ------------------------------------------------------------------
     # Page enumeration
@@ -398,6 +324,7 @@ class WikiVault:
                     "title": self.page_title(body, path.stem),
                     "ptype": ptype,
                     "updated": meta.get("updated", ""),
+                    "description": meta.get("description", ""),
                     "text": text,
                     "body": body,
                     "meta": meta,
@@ -430,7 +357,7 @@ class WikiVault:
                 "type": page["ptype"],
                 "aliases": aliases if isinstance(aliases, list) else [str(aliases)],
                 "tags": tags if isinstance(tags, list) else [str(tags)],
-                "summary": first_summary_line(page["body"]),
+                "summary": page_summary(page),
             })
         return sorted(manifest, key=lambda page: page["path"].lower())
 
@@ -776,25 +703,16 @@ class WikiVault:
             # No frontmatter yet: derive a complete, non-empty trio from the
             # page's own title/filename/type (never empty, never invented).
             derived_aliases, derived_tags = _auto_fill_aliases_tags(ptype, path.stem, content)
+            # Keep the established compact flow-list shape for pages that did
+            # not provide frontmatter; subsequent edits use the safe full
+            # serializer and preserve any optional keys.
             content = (
                 f"---\ntype: {ptype}\n"
                 f"updated: {date.today().isoformat()}\n"
-                f"tags: {derived_tags}\naliases: {derived_aliases}\n---\n\n{content}"
+                f"tags: {derived_tags}\naliases: {derived_aliases}\n---\n\n"
+                f"{content.lstrip(chr(10))}"
             )
         else:
-            # refresh the updated stamp on every edit
-            content = FRONTMATTER_RE.sub(
-                lambda m: re.sub(
-                    r"(?m)^updated:.*$",
-                    f"updated: {date.today().isoformat()}",
-                    m.group(0),
-                    count=1,
-                ),
-                content,
-                count=1,
-            )
-            # Re-parse after updated bump (meta already correct due to fixed parse_frontmatter)
-            meta, _ = self.parse_frontmatter(content)
             # Guard: capture existing tags/aliases from file on disk BEFORE overwrite
             existing_tags: list = []
             existing_aliases: list = []
@@ -849,23 +767,13 @@ class WikiVault:
                 # Empty and no prior aliases: auto-fill from title/filename
                 # so aliases are never empty going forward.
                 aliases_list, _ = _auto_fill_aliases_tags(ptype, path.stem, content)
-
-            fm_pairs = [
-                ("type", ptype),
-                ("updated", date.today().isoformat()),
-                ("tags", tags_list),
-                ("aliases", aliases_list),
-            ]
-            def _fmt(v):
-                return "[]" if not v else str(v)
-            fm_lines = ["---"]
-            for k, v in fm_pairs:
-                if isinstance(v, list):
-                    fm_lines.append(_format_yaml_list(k, v))
-                else:
-                    fm_lines.append(f"{k}: {_fmt(v)}")
-            fm_text = "\n".join(fm_lines) + "\n---\n\n"
-            content = FRONTMATTER_RE.sub(lambda m: fm_text, content, count=1)
+            # Update only managed fields; optional and nested metadata stays in
+            # the parsed mapping and is serialized back unchanged.
+            meta["type"] = ptype
+            meta["updated"] = date.today().isoformat()
+            meta["tags"] = tags_list
+            meta["aliases"] = aliases_list
+            content = f"{serialize_frontmatter(meta)}\n\n{body.lstrip(chr(10))}"
 
         _final_meta, final_body = self.parse_frontmatter(content)
         report = validate_page_structure(
@@ -1090,9 +998,8 @@ class WikiVault:
             else:
                 for page in plist:
                     key = page["rel"]
-                    summary = old_summaries.get(key) or first_summary_line(
-                        page["body"]
-                    )
+                    description = page.get("description") or page.get("meta", {}).get("description", "")
+                    summary = page_summary(page) if str(description).strip() else old_summaries.get(key) or page_summary(page)
                     parts.append(f"- [[{key}|{page['title']}]] - {summary}")
             parts.append("")
         self.index_path.write_text("\n".join(parts), encoding="utf-8")
@@ -1130,6 +1037,7 @@ class WikiVault:
     # ------------------------------------------------------------------
 
     def _keyword_search(self, query: str, limit: int = 5) -> list[dict]:
+        from .intent import page_description
         from .search import normalize_search, query_tokens
         tokens = query_tokens(query)
         results = []
@@ -1184,12 +1092,15 @@ class WikiVault:
                 score += 20
             if score <= 0:
                 continue
+            description = page_description(page)
             snippet = ""
             for line in page["body"].splitlines():
                 line_low = normalize_search(line)
                 if any(token_count(line_low, t) for t in tokens) and len(line.strip()) > 3:
                     snippet = line.strip()[:180]
                     break
+            if not snippet:
+                snippet = description[:180]
             # raw transcripts mention everything repeatedly; divide their
             # score so curated pages always outrank them in recall
             if page["ptype"] == "source":
@@ -1201,6 +1112,7 @@ class WikiVault:
                     "title": page["title"],
                     "type": page["ptype"],
                     "updated": page["updated"],
+                    "description": description,
                     "score": round(score, 1),
                     "snippet": snippet,
                 }
@@ -1660,16 +1572,6 @@ class WikiVault:
     def fix_orphans(self, dry_run: bool = False) -> dict:
         from .lint import fix_orphans
         return fix_orphans(self, dry_run=dry_run)
-
-def first_summary_line(body: str) -> str:
-    """First meaningful non-heading line, truncated for the index bullet."""
-    for line in body.splitlines():
-        s = line.strip()
-        if not s or s.startswith(("#", ">", "---", "!", "|")):
-            continue
-        return (s[:140] + "...") if len(s) > 140 else s
-    return "(empty page)"
-
 
 def _alias_map(pages: list) -> dict:
     """stem -> rel for both page stems AND declared frontmatter aliases.

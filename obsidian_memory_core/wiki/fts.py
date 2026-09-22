@@ -14,7 +14,7 @@ from .search import (
     page_matches_filters,
     query_tokens,
 )
-from .intent import normalize_search, page_anchor_score, page_search_text
+from .intent import normalize_search, page_anchor_score, page_description, page_search_text
 from obsidian_memory_core.db.migrations import upgrade
 from obsidian_memory_core.db.models import EmbeddingPage, FtsMeta, FtsPage
 from sqlalchemy import create_engine, delete, event, func, literal_column, select
@@ -116,8 +116,9 @@ def _embedding_search(
                 scored.append({
                     "path": page["rel"], "title": page["title"],
                     "type": page["ptype"], "updated": page["updated"],
+                    "description": page_description(page),
                     "score": float(round(float(similarity), 4)),
-                    "snippet": "", "match": "embedding",
+                    "snippet": page_description(page), "match": "embedding",
                 })
         return sorted(scored, key=lambda r: (-r["score"], r["title"].casefold()))[:limit]
     except Exception:
@@ -217,21 +218,27 @@ def search_fts(vault, query, limit=100, pages: list[dict] | None = None):
     rows = _fts_rows(vault, query, limit)
     tokens = query_tokens(query)
     allowed = None if pages is None else {page["rel"] for page in pages}
-    return [
-        {
+    pages_by_path = {page["rel"]: page for page in pages or []}
+    results = []
+    for r in rows:
+        if allowed is not None and r[0] not in allowed:
+            continue
+        page = pages_by_path.get(r[0], {})
+        description = page_description(page)
+        snippet = next(
+            (x.strip()[:180] for x in r[2].splitlines() if any(t in normalize_search(x) for t in tokens)),
+            "",
+        )
+        results.append({
             "path": r[0],
             "title": r[1],
             "type": r[3],
             "updated": r[4],
+            "description": description,
             "fts_rank": -float(r[5]),
-            "snippet": next(
-                (x.strip()[:180] for x in r[2].splitlines() if any(t in normalize_search(x) for t in tokens)),
-                "",
-            ),
-        }
-        for r in rows
-        if allowed is None or r[0] in allowed
-    ]
+            "snippet": snippet or description[:180],
+        })
+    return results
 
 def _has_exact_curated_match(
     vault,
