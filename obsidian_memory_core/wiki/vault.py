@@ -25,6 +25,7 @@ from obsidian_memory_core.wiki.dedup import detect_duplicates as _detect_duplica
 from obsidian_memory_core.wiki.generation import generate_index_proposal
 from obsidian_memory_core.wiki.search import search as _search_fn, prefetch_context as _prefetch_fn
 from obsidian_memory_core.wiki.structure import validate_page_structure
+from obsidian_memory_core.wiki.sections import MAX_SECTION_WIKILINKS, limit_section_wikilinks
 
 logger = logging.getLogger(__name__)
 
@@ -775,6 +776,10 @@ class WikiVault:
             meta["aliases"] = aliases_list
             content = f"{serialize_frontmatter(meta)}\n\n{body.lstrip(chr(10))}"
 
+        if ptype != "source":
+            content = limit_section_wikilinks(content, "Related")
+            content = limit_section_wikilinks(content, "Linked from")
+
         _final_meta, final_body = self.parse_frontmatter(content)
         report = validate_page_structure(
             content,
@@ -803,7 +808,7 @@ class WikiVault:
                 fm_text = m.group(0) if m else ""
                 body = raw[m.end():] if m else raw
                 stem = target_path.stem
-                inbound = sorted(self._inbound_links(stem))
+                inbound = sorted(self._inbound_links(stem))[:MAX_SECTION_WIKILINKS]
                 header = "## Linked from"
                 # Strip only the generated backlink section. Historically it
                 # was always last, so the old implementation truncated

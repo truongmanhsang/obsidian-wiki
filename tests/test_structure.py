@@ -99,3 +99,25 @@ def test_extra_domain_sections_are_allowed():
         "concept",
     )
     assert result["valid"] is True
+
+
+def test_terminal_navigation_sections_allow_at_most_ten_wikilinks():
+    related = "\n".join(f"- [[concepts/related-{i}|Related {i}]]" for i in range(11))
+    content = (
+        "---\n"
+        "type: concept\n"
+        "updated: 2026-09-22\n"
+        "tags: [test]\n"
+        "aliases: [Link Limit]\n"
+        "---\n\n"
+        "# Link Limit\n\n"
+        "## Summary\n\nSummary.\n\n"
+        "## Core Content\n\nDetails.\n\n"
+        f"## Related\n\n{related}\n"
+    )
+
+    strict = validate_page_structure(content, "concept", mode="strict", expected_title="Link Limit")
+    lint = validate_page_structure(content, "concept", mode="lint", expected_title="Link Limit")
+
+    assert any(issue["code"] == "too_many_section_links" for issue in strict["errors"])
+    assert any(issue["code"] == "too_many_section_links" for issue in lint["warnings"])

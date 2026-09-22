@@ -1048,6 +1048,42 @@ class TestWritePath:
         related = target.split("## Related", 1)[1]
         assert "[[concepts/related-neighbor|Related Neighbor]]" in related
 
+    def test_auto_backlinks_are_capped_at_ten(self, provider):
+        _call(provider, action="write", page="concepts/backlink-cap-target",
+              content="# Backlink Cap Target\n\n## Summary\n\nTarget.\n\n## Core Content\n\nDetails.\n\n## Related\n\n- [[concepts/other|Other]]\n")
+        for index in range(12):
+            _call(provider, action="write", page=f"concepts/backlink-cap-source-{index}",
+                  content=(
+                      f"# Backlink Cap Source {index}\n\n"
+                      "## Summary\n\nSource.\n\n"
+                      "## Core Content\n\n"
+                      "Links to [[concepts/backlink-cap-target|Backlink Cap Target]].\n\n"
+                      "## Related\n\n- [[concepts/backlink-cap-target|Backlink Cap Target]]\n"
+                  ))
+
+        target = _call(provider, action="read", page="concepts/backlink-cap-target")["content"]
+        linked = target.split("## Linked from", 1)[1].split("## Related", 1)[0]
+        assert linked.count("[[") == 10
+
+    def test_write_trims_related_to_ten_wikilinks(self, provider):
+        links = "\n".join(
+            f"- [[concepts/related-cap-{index}|Related {index}]]"
+            for index in range(12)
+        )
+        _call(provider, action="write", page="concepts/related-cap-page",
+              content=(
+                  "# Related Cap Page\n\n"
+                  "## Summary\n\nSummary.\n\n"
+                  "## Core Content\n\nDetails.\n\n"
+                  f"## Related\n\n{links}\n"
+              ))
+
+        page = _call(provider, action="read", page="concepts/related-cap-page")["content"]
+        related = page.split("## Related", 1)[1]
+        assert related.count("[[") == 10
+        assert "related-cap-9" in related
+        assert "related-cap-10" not in related
+
     def test_append_preserves_content_when_page_has_auto_backlinks(self, provider):
         _call(provider, action="write", page="concepts/append-with-backlinks",
               content="# Append With Backlinks\n\nOriginal content.\n")

@@ -64,7 +64,7 @@ Required markdown structure for every curated page:
 - person: `## Identity` or `## Overview`, plus `## Details` or `## Facts`
 - environment: `## Scope`, plus `## Configuration` or `## Facts`
 - preference: `## Preference`, plus `## Rationale`
-- every curated page MUST end with a non-empty `## Related` section containing wikilinks
+- every curated page MUST end with a non-empty `## Related` section containing 1-10 wikilinks
 
 Rules:
 - update ONLY pages listed below; create only when no existing page covers it

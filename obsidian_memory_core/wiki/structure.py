@@ -7,6 +7,7 @@ from typing import Any
 
 from .frontmatter import FRONTMATTER_RE, parse_frontmatter
 from .links import WIKILINK_RE
+from .sections import MAX_SECTION_WIKILINKS
 
 
 HEADING_RE = re.compile(r"^(?P<marks>#{1,6})[ \t]+(?P<title>\S(?:.*\S)?)\s*$")
@@ -197,6 +198,27 @@ def add_profile_issues(
         target.append(_issue("missing_related", "curated pages require a ## Related section"))
 
 
+def add_terminal_link_limit_issues(
+    headings: list[dict[str, Any]],
+    body: str,
+    mode: str,
+    errors: list[dict[str, Any]],
+    warnings: list[dict[str, Any]],
+) -> None:
+    for index, heading in enumerate(headings):
+        if heading["level"] != 2 or heading["normalized"] not in {"related", "linked from"}:
+            continue
+        count = len(WIKILINK_RE.findall(_section_content(body, headings, index)))
+        if count <= MAX_SECTION_WIKILINKS:
+            continue
+        target = errors if mode != "lint" else warnings
+        target.append(_issue(
+            "too_many_section_links",
+            f"section '{heading['title']}' has {count} wikilinks; maximum is {MAX_SECTION_WIKILINKS}",
+            heading["line"],
+        ))
+
+
 def add_link_syntax_issues(body: str, errors: list[dict[str, Any]]) -> None:
     unmatched = body.count("[[") - len(WIKILINK_RE.findall(body))
     if unmatched > 0:
@@ -247,6 +269,7 @@ def validate_page_structure(
         source=page_type == "source",
     )
     add_profile_issues(page_type, headings, body, mode, errors, warnings)
+    add_terminal_link_limit_issues(headings, body, mode, errors, warnings)
     add_link_syntax_issues(body, errors)
 
     return {

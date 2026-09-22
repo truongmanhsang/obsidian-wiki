@@ -25,6 +25,7 @@ from obsidian_memory_core import MemoryStore  # noqa: E402
 from obsidian_memory_core.wiki.frontmatter import FRONTMATTER_RE  # noqa: E402
 from obsidian_memory_core.wiki.links import WIKILINK_RE  # noqa: E402
 from obsidian_memory_core.wiki.structure import HEADING_RE, scan_headings, validate_page_structure  # noqa: E402
+from obsidian_memory_core.wiki.sections import limit_section_wikilinks  # noqa: E402
 
 
 CURATED_TYPES = {
@@ -451,6 +452,8 @@ def transform_page(page: dict[str, Any], catalog: list[dict[str, Any]], inbound:
     body = normalize_headings(body)
     body = sanitize_wikilink_labels(body)
     transformed = f"{frontmatter}\n\n{body}"
+    transformed = limit_section_wikilinks(transformed, "Related")
+    transformed = limit_section_wikilinks(transformed, "Linked from")
     report = validate_page_structure(
         transformed,
         page["ptype"],
