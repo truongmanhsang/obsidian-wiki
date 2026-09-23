@@ -7,7 +7,6 @@ from collections import defaultdict
 from .intent import normalize_search, page_anchor_score, query_tokens
 from .search import exact_page_match, normalize_search_filters, page_matches_filters
 
-_MIN_SECTION_SEMANTIC_SCORE = 0.35
 _MIN_SECTION_LEXICAL_SCORE = 0.45
 
 
@@ -63,9 +62,36 @@ def split_markdown_sections(page: dict, *, max_chars: int) -> list[dict]:
         prefix = f"## {heading}\n\n" if heading else ""
         available = max(1, max_chars - len(prefix))
         paragraphs = re.split(r"\n\s*\n", raw) if raw else [""]
+        fact_blocks: list[str] = []
+        for paragraph in paragraphs:
+            # Keep fenced examples intact; elsewhere, list entries are commonly
+            # independent facts and should be ranked independently.
+            if "```" in paragraph or "~~~" in paragraph:
+                fact_blocks.append(paragraph)
+                continue
+            current: list[str] = []
+            for line in paragraph.splitlines():
+                is_list_item = re.match(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)", line)
+                if is_list_item and current:
+                    fact_blocks.append("\n".join(current).strip())
+                    current = [line]
+                else:
+                    current.append(line)
+            if current:
+                fact_blocks.append("\n".join(current).strip())
         chunks: list[str] = []
         current = ""
-        for paragraph in paragraphs:
+        for paragraph in fact_blocks:
+            if re.match(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)", paragraph):
+                if current:
+                    chunks.append(current)
+                    current = ""
+                while len(paragraph) > available:
+                    chunks.append(paragraph[:available])
+                    paragraph = paragraph[available:]
+                if paragraph:
+                    chunks.append(paragraph)
+                continue
             while len(paragraph) > available:
                 if current:
                     chunks.append(current)
@@ -116,7 +142,7 @@ def _lexical_score(query: str, text: str) -> float:
 
 def select_reflect_excerpts(
     query: str, pages: list[dict], *, embedder=None,
-    max_sections_per_page: int = 2, max_excerpt_chars: int = 1800,
+    max_sections_per_page: int | None = None, max_excerpt_chars: int = 1800,
     max_total_chars: int = 12000,
 ) -> list[dict]:
     sections = []
@@ -161,14 +187,16 @@ def select_reflect_excerpts(
         lexical = _lexical_score(query, section["content"])
         semantic_score = max(0.0, min(1.0, semantic[index])) if semantic_available else 0.0
         if lexical < _MIN_SECTION_LEXICAL_SCORE and (
-            not semantic_available or semantic_score < _MIN_SECTION_SEMANTIC_SCORE
+            not semantic_available or semantic_score <= 0.0
         ):
             continue
         score = 0.6 * semantic_score + 0.4 * lexical if semantic_available else lexical
         by_page[section["path"]].append((score, index, section))
     ranked_pages = []
     for path, ranked in by_page.items():
-        chosen = sorted(ranked, key=lambda value: (-value[0], value[1]))[:max_sections_per_page]
+        chosen = sorted(ranked, key=lambda value: (-value[0], value[1]))
+        if max_sections_per_page is not None:
+            chosen = chosen[:max_sections_per_page]
         chosen.sort(key=lambda value: value[1])
         ranked_pages.append((max((value[0] for value in chosen), default=0.0), path, chosen))
     ranked_pages.sort(key=lambda value: (-value[0], value[1].casefold()))
@@ -178,14 +206,16 @@ def select_reflect_excerpts(
     total = 0
     for _, path, chosen in ranked_pages:
         contents = []
+        page_remaining = max_excerpt_chars
         for _, _, section in chosen:
             separator_size = 2 if contents else 0
-            remaining = max_total_chars - total - separator_size
+            remaining = min(max_total_chars - total - separator_size, page_remaining)
             if remaining <= 0:
                 break
             content = section["content"][:min(max_excerpt_chars, remaining)]
             contents.append(content)
             total += separator_size + len(content)
+            page_remaining -= len(content)
         if contents:
             output.append({"path": path, "content": "\n\n".join(contents)})
         if total >= max_total_chars:

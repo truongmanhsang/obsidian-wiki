@@ -165,6 +165,81 @@ def test_selector_drops_a_page_with_only_one_weak_query_token():
     assert result == []
 
 
+def test_splitter_keeps_each_fact_bullet_as_its_own_heading_context_chunk():
+    page = {
+        "rel": "people/example.md",
+        "title": "Example Person",
+        "body": "## Profile\n\n- First fact.\n- Second fact.\n- Third fact.",
+    }
+
+    chunks = split_markdown_sections(page, max_chars=1800)
+
+    assert len(chunks) == 3
+    assert all("## Profile" in chunk["content"] for chunk in chunks)
+    assert [chunk["content"].splitlines()[-1] for chunk in chunks] == [
+        "- First fact.", "- Second fact.", "- Third fact.",
+    ]
+
+
+def test_selector_uses_multilingual_semantic_relevance_between_atomic_facts():
+    question = "bạn gái tôi làm nghề gì"
+    target = "## Profile\n\n- Occupation: English teacher."
+
+    class FakeEmbedder:
+        def embed(self, values):
+            vectors = {
+                question: [1.0, 0.0],
+                "## Profile\n\n- Birth date: 7 February 1997.": [0.0, 1.0],
+                target: [0.2, 0.98],
+            }
+            return [vectors.get(value, [0.0, 1.0]) for value in values]
+
+    page = {
+        "rel": "people/example.md",
+        "title": "Example Person",
+        "body": "## Profile\n\n- Birth date: 7 February 1997.\n"
+                "- Occupation: English teacher.",
+    }
+    excerpts = select_reflect_excerpts(
+        question, [page], embedder=FakeEmbedder(), max_sections_per_page=1,
+    )
+
+    assert excerpts
+    assert excerpts[0]["content"] == target
+
+
+def test_selector_keeps_lower_ranked_fact_when_it_fits_page_context_budget():
+    question = "bạn gái tôi làm nghề gì"
+    target = "## Profile\n\n- Occupation: English teacher."
+    facts = [
+        "## Profile\n\n- Current address: Somewhere.",
+        "## Profile\n\n- Gift purchase: A book.",
+        "## Profile\n\n- Family detail: Has a sibling.",
+        "## Profile\n\n- Date of birth: A date.",
+        target,
+    ]
+
+    class FakeEmbedder:
+        def embed(self, values):
+            scores = {facts[0]: 0.9, facts[1]: 0.8, facts[2]: 0.7,
+                      facts[3]: 0.6, target: 0.2}
+            return [[1.0, 0.0] if value == question else
+                    [scores.get(value, 0.0), (1 - scores.get(value, 0.0) ** 2) ** 0.5]
+                    for value in values]
+
+    page = {
+        "rel": "people/example.md",
+        "title": "Example Person",
+        "body": "## Profile\n\n" + "\n".join(fact.split("\n\n", 1)[1] for fact in facts),
+    }
+    excerpts = select_reflect_excerpts(
+        question, [page], embedder=FakeEmbedder(), max_excerpt_chars=1000,
+    )
+
+    assert excerpts
+    assert "Occupation: English teacher" in excerpts[0]["content"]
+
+
 def test_selector_groups_sections_by_original_page_path():
     page = {
         "rel": "people/example.md", "title": "Example",
