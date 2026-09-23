@@ -140,14 +140,15 @@ turn:
 | `reflect` | Search relevant pages, read their full content, then synthesize an answer | Yes, for matching pages |
 | `auto` | Use `recall` for ordinary lookups and `reflect` for synthesis-style queries such as comparisons, recommendations, “why”, “how”, summaries, and equivalent Vietnamese queries | Only when synthesis is detected |
 
-Reflection uses Hermes' configured provider/model through
-`agent.oneshot.run_oneshot()` by default. The standalone MCP server can instead
-use `OBSIDIAN_MEMORY_REFLECT_PROVIDER=codex`; that provider reads the existing
-Codex CLI session from `CODEX_AUTH_PATH` (normally `~/.codex/auth.json`) and
-calls the Codex Responses endpoint. The file is read-only and Codex CLI remains
-responsible for refreshing its session. Set
-`OBSIDIAN_MEMORY_REFLECT_MODEL` to the model accepted by the current Codex
-session. Additional providers can be added behind the same provider interface.
+The Hermes plugin's in-process reflection can use its configured runtime. The
+standalone MCP server does not import or require Hermes: its default provider
+calls an OpenAI-compatible Chat Completions API directly. Configure
+`OBSIDIAN_MEMORY_API_KEY`, `OBSIDIAN_MEMORY_REFLECT_MODEL`, and optionally
+`OBSIDIAN_MEMORY_API_BASE_URL` (default `https://api.openai.com/v1`). A
+Codex-provider option remains available for installations already using the
+Codex CLI login; neither provider imports or requires Hermes. The Docker
+Compose file retains a read-only Codex auth bind mount for compatibility, but
+the API provider does not read or depend on it.
 
 Reflection is a stateless auxiliary request containing the query and retrieved
 wiki pages, not the full chat history. Set `prefetch_method: recall` to avoid
@@ -523,7 +524,7 @@ can bypass the central job queue.
 
 #### Docker Compose setup
 
-For a persistent standalone server, use the provided Docker Compose configuration. This runs the memory server independently from Hermes. Reflection can use the existing Codex CLI login when `CODEX_AUTH_HOST_PATH`, `OBSIDIAN_MEMORY_REFLECT_PROVIDER`, and `OBSIDIAN_MEMORY_REFLECT_MODEL` are configured in `.env`.
+For a persistent standalone server, use the provided Docker Compose configuration. The MCP/Reflect service runs independently from Hermes. Add `OBSIDIAN_MEMORY_API_KEY` and `OBSIDIAN_MEMORY_REFLECT_MODEL` to `.env`; for a compatible gateway, set `OBSIDIAN_MEMORY_API_BASE_URL` as well. Compose also mounts the configured Codex CLI auth file read-only for legacy `codex` provider setups; the default API provider does not use it. Neither mode requires Hermes runtime or credentials.
 
 First, ensure Docker is installed. Then, from the `obsidianwiki` directory, start the server:
 
@@ -728,9 +729,8 @@ obsidian_memory_core
 
 The MCP adapter supports `memory_search`, `memory_read`, `memory_list`,
 `memory_reflect`, `memory_lint`, `memory_log`, `memory_write`, `memory_append`,
-and read-only `memory_ingest_status`. Reflection uses the configured Hermes or
-Codex provider. Hermes-backed reflection uses the shared `run_oneshot` runtime;
-Codex-backed reflection reads the existing Codex CLI session described above.
+and read-only `memory_ingest_status`. Standalone MCP reflection calls the
+configured OpenAI-compatible API directly and has no Hermes runtime dependency.
 Ingest execution stays in the Hermes plugin; writes use an exclusive lock and
 require an `expected_revision` SHA-256
 check when updating an existing page, rejecting stale updates from concurrent

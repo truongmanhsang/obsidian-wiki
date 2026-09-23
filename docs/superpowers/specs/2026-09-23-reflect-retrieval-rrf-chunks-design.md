@@ -17,7 +17,7 @@ Improve `memory_reflect` recall across question types by retrieving candidates i
 2. Run independent FTS, keyword, and embedding retrieval over that snapshot with a broader candidate pool.
 3. Fuse channel ranks by path with RRF, using deterministic tie-breaking and preserving exact identity/phrase signals as high-confidence evidence.
 4. For the fused candidates, split Markdown into heading-aware sections. Score sections using query relevance, selecting a bounded number per page and globally.
-5. Pass the selected excerpts, their original page paths, and the original query to the configured reflection provider.
+5. Pass the selected excerpts, their original page paths, and the original query to the configured reflection provider. The standalone MCP provider calls an OpenAI-compatible API directly and must not depend on Hermes runtime/auth.
 6. Return the pages that actually contributed excerpts in `sources`.
 
 ## Design constraints
@@ -30,6 +30,7 @@ Improve `memory_reflect` recall across question types by retrieving candidates i
 - Bound candidate count, excerpt count, per-page excerpt length, and total context size to control latency and prompt size.
 - Empty or malformed Markdown still yields a safe bounded fallback excerpt.
 - Reflection remains grounded: the LLM may answer only from supplied excerpts and should state when they do not establish the answer.
+- Standalone MCP/Reflect runs in the container without importing or requiring Hermes. API credentials, model, and optional compatible base URL are supplied through environment configuration.
 
 ## Approaches considered
 
@@ -50,4 +51,4 @@ Improve `memory_reflect` recall across question types by retrieving candidates i
 - Changing Search UI ranking or semantic thresholds.
 - Adding topic-specific synonym dictionaries or hard-coded entity rules.
 - Adding a new vector database, persistent chunk index, or automatic page migration.
-- Changing reflection-provider configuration or LLM model.
+- Changing Search's provider configuration or LLM model.

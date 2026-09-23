@@ -1047,12 +1047,14 @@ class WikiVault:
     # Search / prefetch
     # ------------------------------------------------------------------
 
-    def _keyword_search(self, query: str, limit: int = 5) -> list[dict]:
+    def _keyword_search(
+        self, query: str, limit: int = 5, pages: list[dict] | None = None
+    ) -> list[dict]:
         from .intent import page_description
         from .search import normalize_search, query_tokens
         tokens = query_tokens(query)
         results = []
-        all_pages = self.load_pages()
+        all_pages = list(pages) if pages is not None else self.load_pages()
         aliases = _alias_map(all_pages)
         # alias tokens may be short acronyms ("GR") - match them directly,
         # bypassing the 3-char body-token minimum

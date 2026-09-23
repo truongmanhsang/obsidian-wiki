@@ -12,6 +12,14 @@ from urllib.request import Request, urlopen
 
 DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 DEFAULT_CODEX_AUTH_PATH = Path.home() / ".codex" / "auth.json"
+DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+_GROUNDING_INSTRUCTIONS = (
+    " For questions about a relationship or attribute, identify the subject and "
+    "relationship requested, then use only a source statement that explicitly "
+    "connects that subject to the answer. Do not substitute the page owner's "
+    "identity or another mentioned person's name for the requested relationship. "
+    "If the sources do not explicitly establish the connection, say so."
+)
 
 
 class ReflectProvider(Protocol):
@@ -21,6 +29,14 @@ class ReflectProvider(Protocol):
 
 def _extract_text(payload: Any) -> str:
     if isinstance(payload, dict):
+        choices = payload.get("choices")
+        if isinstance(choices, list) and choices:
+            message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+            content = message.get("content") if isinstance(message, dict) else None
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+            if isinstance(content, list):
+                return _extract_text(content)
         direct = payload.get("output_text")
         if isinstance(direct, str) and direct.strip():
             return direct.strip()
@@ -39,6 +55,70 @@ def _extract_text(payload: Any) -> str:
     elif isinstance(payload, str):
         return payload.strip()
     return ""
+
+
+class OpenAICompatibleProvider:
+    """Standalone Chat Completions provider; no Hermes runtime is required."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
+        timeout: float = 90.0,
+    ) -> None:
+        self.api_key = (api_key or os.environ.get("OBSIDIAN_MEMORY_API_KEY", "")).strip()
+        self.model = (model or os.environ.get("OBSIDIAN_MEMORY_REFLECT_MODEL", "")).strip()
+        self.base_url = (
+            base_url
+            or os.environ.get("OBSIDIAN_MEMORY_API_BASE_URL", "")
+            or DEFAULT_OPENAI_BASE_URL
+        ).rstrip("/")
+        self.timeout = timeout
+
+    def reflect(self, query: str, pages: list[dict[str, Any]]) -> str:
+        if not self.api_key:
+            raise RuntimeError("OBSIDIAN_MEMORY_API_KEY is required for API reflection")
+        if not self.model:
+            raise RuntimeError("OBSIDIAN_MEMORY_REFLECT_MODEL is required for API reflection")
+        context = "\n\n".join(
+            f"SOURCE: {page['path']}\n{page['content']}" for page in pages
+        )
+        instructions = (
+            "You are the reflection layer for an Obsidian knowledge wiki. "
+            "Answer only from the supplied sources; synthesize across sources, "
+            "distinguish facts from uncertainty, and say when they do not establish "
+            "an answer. Be concise and do not invent facts or citations."
+            + _GROUNDING_INSTRUCTIONS
+        )
+        request = Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps({
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": instructions},
+                    {"role": "user", "content": f"Question:\n{query}\n\nSources:\n{context}"},
+                ],
+                "temperature": 0.2,
+            }).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            raise RuntimeError(f"API reflection request failed with HTTP {exc.code}") from exc
+        except (OSError, URLError, json.JSONDecodeError) as exc:
+            raise RuntimeError("API reflection request failed") from exc
+        text = _extract_text(payload)
+        if not text:
+            raise RuntimeError("API reflection returned no text")
+        return text
 
 
 def _extract_sse_text(response: Any) -> str:
@@ -119,6 +199,7 @@ class CodexProvider:
             "Synthesize across sources, distinguish facts from uncertainty, and "
             "say when the sources do not establish an answer. Be concise. "
             "Do not invent citations or facts."
+            + _GROUNDING_INSTRUCTIONS
         )
         request = Request(
             f"{self.base_url}/responses",
@@ -154,4 +235,4 @@ class CodexProvider:
         return text
 
 
-__all__ = ["CodexProvider", "ReflectProvider"]
+__all__ = ["CodexProvider", "OpenAICompatibleProvider", "ReflectProvider"]

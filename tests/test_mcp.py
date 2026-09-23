@@ -171,6 +171,8 @@ def test_codex_provider_reads_cli_auth_without_hermes_auth(monkeypatch, tmp_path
     assert captured["body"]["model"] == "gpt-test"
     assert captured["body"]["store"] is False
     assert captured["body"]["stream"] is True
+    assert "subject and relationship" in captured["body"]["instructions"].casefold()
+    assert "page owner's identity" in captured["body"]["instructions"].casefold()
 
 
 def test_codex_provider_rejects_missing_cli_auth(tmp_path):
@@ -180,6 +182,88 @@ def test_codex_provider_rejects_missing_cli_auth(tmp_path):
         CodexProvider(auth_path=tmp_path / "missing.json", model="gpt-test").reflect(
             "Question", []
         )
+
+
+def test_openai_compatible_provider_uses_direct_api_without_hermes(monkeypatch):
+    from obsidian_memory_core.reflect import OpenAICompatibleProvider
+
+    captured = {}
+
+    class Response:
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": "Grounded API answer"}}]}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["headers"] = dict(request.header_items())
+        captured["body"] = json.loads(request.data.decode())
+        return Response()
+
+    monkeypatch.setattr("obsidian_memory_core.reflect.urlopen", fake_urlopen)
+    result = OpenAICompatibleProvider(
+        api_key="test-key", model="test-model", base_url="https://api.example/v1"
+    ).reflect("Question", [{"path": "people/example.md", "content": "Answer."}])
+
+    assert result == "Grounded API answer"
+    assert captured["url"] == "https://api.example/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer test-key"
+    assert captured["body"]["model"] == "test-model"
+
+
+def test_reflection_prompt_requires_explicit_subject_relation_grounding(monkeypatch):
+    from obsidian_memory_core.reflect import OpenAICompatibleProvider
+
+    captured = {}
+
+    class Response:
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": "Grounded answer"}}]}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data.decode())
+        return Response()
+
+    monkeypatch.setattr("obsidian_memory_core.reflect.urlopen", fake_urlopen)
+    OpenAICompatibleProvider(
+        api_key="test-key", model="test-model", base_url="https://api.example/v1"
+    ).reflect("Ba tôi tên gì?", [{
+        "path": "people/example.md",
+        "content": "# Example Person\n\n## Family\n\n- Father: Another Person",
+    }])
+
+    instructions = captured["body"]["messages"][0]["content"].casefold()
+    assert "subject and relationship" in instructions
+    assert "page owner" in instructions
+
+
+def test_mcp_reflection_defaults_to_standalone_api_provider(monkeypatch):
+    import mcp_server
+
+    selected = []
+
+    class Provider:
+        def __init__(self):
+            selected.append("api")
+
+        def reflect(self, query, pages):
+            return "standalone"
+
+    monkeypatch.delenv("OBSIDIAN_MEMORY_REFLECT_PROVIDER", raising=False)
+    monkeypatch.setattr("obsidian_memory_core.reflect.OpenAICompatibleProvider", Provider)
+    assert mcp_server._run_reflection("Q", []) == "standalone"
+    assert selected == ["api"]
 
 
 def test_reflect_returns_synthesis_from_relevant_pages(monkeypatch, tmp_path):

@@ -15,17 +15,19 @@ services:
       # Multilingual semantic index; override in .env for a different model.
       - OBSIDIAN_WIKI_EMBEDDING_MODEL=${OBSIDIAN_WIKI_EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
       - OBSIDIAN_WIKI_EMBEDDING_THRESHOLD=${OBSIDIAN_WIKI_EMBEDDING_THRESHOLD:-0.25}
-      # Reflection uses the existing Codex CLI OAuth session when selected.
-      - OBSIDIAN_MEMORY_REFLECT_PROVIDER=${OBSIDIAN_MEMORY_REFLECT_PROVIDER:-hermes}
+      # Reflection calls an OpenAI-compatible API directly; Hermes is not needed.
+      - OBSIDIAN_MEMORY_REFLECT_PROVIDER=${OBSIDIAN_MEMORY_REFLECT_PROVIDER:-openai}
       - OBSIDIAN_MEMORY_REFLECT_MODEL=${OBSIDIAN_MEMORY_REFLECT_MODEL:-}
+      - OBSIDIAN_MEMORY_API_KEY=${OBSIDIAN_MEMORY_API_KEY:-}
+      - OBSIDIAN_MEMORY_API_BASE_URL=${OBSIDIAN_MEMORY_API_BASE_URL:-https://api.openai.com/v1}
       - CODEX_AUTH_PATH=/root/.codex/auth.json
     volumes:
       # Set OBSIDIAN_VAULT_HOST_PATH to the host vault before starting.
       - ${OBSIDIAN_VAULT_HOST_PATH:?Set OBSIDIAN_VAULT_HOST_PATH to the host vault}:/vault
+      # Used only when OBSIDIAN_MEMORY_REFLECT_PROVIDER=codex; unrelated to Hermes auth.
+      - ${CODEX_AUTH_HOST_PATH:?Set CODEX_AUTH_HOST_PATH to the Codex CLI auth file}:/root/.codex/auth.json:ro
       # Ingest is owned by the Hermes plugin; MCP only reads its status DB.
       - ./.state:/ingest-state:ro
-      # Read the existing Codex CLI login; Codex CLI owns token refreshes.
-      - ${CODEX_AUTH_HOST_PATH:?Set CODEX_AUTH_HOST_PATH to the Codex CLI auth file}:/root/.codex/auth.json:ro
     healthcheck:
       test:
         - CMD-SHELL
@@ -58,14 +60,16 @@ services:
       - WIKI_JOB_DB=/ingest-state/jobs.db
       - OBSIDIAN_WIKI_EMBEDDING_MODEL=${OBSIDIAN_WIKI_EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
       - OBSIDIAN_WIKI_EMBEDDING_THRESHOLD=${OBSIDIAN_WIKI_EMBEDDING_THRESHOLD:-0.25}
-      - OBSIDIAN_MEMORY_REFLECT_PROVIDER=${OBSIDIAN_MEMORY_REFLECT_PROVIDER:-hermes}
+      - OBSIDIAN_MEMORY_REFLECT_PROVIDER=${OBSIDIAN_MEMORY_REFLECT_PROVIDER:-openai}
       - OBSIDIAN_MEMORY_REFLECT_MODEL=${OBSIDIAN_MEMORY_REFLECT_MODEL:-}
+      - OBSIDIAN_MEMORY_API_KEY=${OBSIDIAN_MEMORY_API_KEY:-}
+      - OBSIDIAN_MEMORY_API_BASE_URL=${OBSIDIAN_MEMORY_API_BASE_URL:-https://api.openai.com/v1}
       - CODEX_AUTH_PATH=/root/.codex/auth.json
     volumes:
       # The web process reads the same canonical vault and plugin-owned ingest status.
       - ${OBSIDIAN_VAULT_HOST_PATH:?Set OBSIDIAN_VAULT_HOST_PATH to the host vault}:/vault
-      - ./.state:/ingest-state:ro
       - ${CODEX_AUTH_HOST_PATH:?Set CODEX_AUTH_HOST_PATH to the Codex CLI auth file}:/root/.codex/auth.json:ro
+      - ./.state:/ingest-state:ro
     healthcheck:
       test:
         - CMD-SHELL

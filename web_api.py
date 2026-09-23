@@ -154,14 +154,11 @@ async def reflect_endpoint(request: Request) -> JSONResponse:
         return _error("invalid_limit", str(exc), 400)
 
     store = _store(request)
-    hits = store.search(query, limit, precise=False).get("results", [])
-    pages: list[dict[str, str]] = []
-    for hit in hits:
-        try:
-            page = store.read(hit["path"])
-        except MemoryWriteError:
-            continue
-        pages.append({"path": hit["path"], "content": page["content"]})
+    from obsidian_memory_core.wiki.reflect_retrieval import retrieve_reflect_excerpts
+
+    pages = retrieve_reflect_excerpts(
+        store.vault, query, result_limit=limit
+    )
 
     if not pages:
         return JSONResponse(

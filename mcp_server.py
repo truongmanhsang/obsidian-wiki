@@ -33,36 +33,18 @@ _ingest_status_reader: IngestJobReader | None = None
 
 def _run_reflection(query: str, pages: list[dict[str, Any]]) -> str:
     """Synthesize retrieved curated pages with the configured provider."""
-    provider = os.environ.get("OBSIDIAN_MEMORY_REFLECT_PROVIDER", "hermes").strip().lower()
+    provider = os.environ.get("OBSIDIAN_MEMORY_REFLECT_PROVIDER", "openai").strip().lower()
+    if provider in {"openai", "openai-compatible", "api"}:
+        from obsidian_memory_core.reflect import OpenAICompatibleProvider
+
+        return OpenAICompatibleProvider().reflect(query, pages)
     if provider in {"codex", "openai-codex"}:
         from obsidian_memory_core.reflect import CodexProvider
 
         return CodexProvider().reflect(query, pages)
-    if provider not in {"", "hermes"}:
+    if provider not in {"", "none"}:
         raise RuntimeError(f"Unsupported reflection provider: {provider}")
-    try:
-        from agent.oneshot import run_oneshot
-    except ImportError as exc:
-        raise RuntimeError("Reflection requires Hermes agent environment with LLM configured") from exc
-
-    context = "\n\n".join(
-        f"SOURCE: {page['path']}\n{page['content']}" for page in pages
-    )
-    instructions = (
-        "You are the reflection layer for an Obsidian knowledge wiki. "
-        "Answer the user's question only from the supplied sources. "
-        "Synthesize across sources, distinguish facts from uncertainty, and "
-        "say when the sources do not establish an answer. Be concise. "
-        "Do not invent citations or facts."
-    )
-    return run_oneshot(
-        instructions=instructions,
-        user_input=f"Question:\n{query}\n\nSources:\n{context}",
-        task="memory_reflection",
-        max_tokens=1200,
-        temperature=0.2,
-        timeout=90.0,
-    )
+    raise RuntimeError("Reflection provider is disabled")
 
 
 _SERVER_VAULT_PATH: str | None = None
@@ -116,14 +98,11 @@ def memory_reflect(query: str, limit: int = 8) -> dict[str, Any]:
     if not query:
         return {"error": "reflect requires a query"}
     store = _store()
-    hits = store.search(query, max(1, min(limit, 20)), precise=False).get("results", [])
-    pages = []
-    for hit in hits:
-        try:
-            page = store.read(hit["path"])
-            pages.append({"path": hit["path"], "content": page["content"]})
-        except Exception:
-            continue
+    from obsidian_memory_core.wiki.reflect_retrieval import retrieve_reflect_excerpts
+
+    pages = retrieve_reflect_excerpts(
+        store.vault, query, result_limit=max(1, min(limit, 20))
+    )
     if not pages:
         return {"query": query, "reflection": "No relevant wiki pages found.", "sources": []}
     try:

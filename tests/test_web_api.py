@@ -61,14 +61,34 @@ def test_page_endpoint_rejects_paths_outside_curated_folders(client):
     assert response.status_code in {400, 404}
 
 
-def test_reflect_endpoint_returns_sources(client, monkeypatch):
-    monkeypatch.setattr("web_api._run_reflection", lambda query, pages: "Grounded answer")
+def test_reflect_endpoint_uses_dedicated_retrieval_pipeline(client, monkeypatch):
+    captured = {}
+    excerpts = [{"path": "people/test-user.md", "content": "## Family\n\n- Father: Example."}]
 
-    response = client.post("/api/reflect", json={"query": "communication", "limit": 3})
+    def fake_retrieve(vault, query, *, result_limit):
+        captured["vault"] = vault
+        captured["query"] = query
+        captured["limit"] = result_limit
+        return excerpts
+
+    def fake_reflect(query, pages):
+        captured["pages"] = pages
+        return "Grounded answer"
+
+    monkeypatch.setattr(
+        "obsidian_memory_core.wiki.reflect_retrieval.retrieve_reflect_excerpts",
+        fake_retrieve,
+    )
+    monkeypatch.setattr("web_api._run_reflection", fake_reflect)
+
+    response = client.post("/api/reflect", json={"query": "ba tôi tên gì", "limit": 3})
 
     assert response.status_code == 200
     assert response.json()["reflection"] == "Grounded answer"
-    assert response.json()["sources"]
+    assert response.json()["sources"] == [{"path": "people/test-user.md"}]
+    assert captured["query"] == "ba tôi tên gì"
+    assert captured["limit"] == 3
+    assert captured["pages"] == excerpts
 
 
 def test_reflect_endpoint_requires_non_empty_query(client):
