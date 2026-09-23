@@ -13,8 +13,11 @@ export const GRAPH_PAGE_TYPES = [
 
 export type GraphPageType = typeof GRAPH_PAGE_TYPES[number]
 
+export type GraphLayoutMode = 'radial' | 'force'
+
 export type GraphSettings = {
   ignoreSources: boolean
+  layoutMode: GraphLayoutMode
   enabledTypes: Record<GraphPageType, boolean>
   colors: Record<GraphPageType, string>
   showLabels: boolean
@@ -25,6 +28,7 @@ export type GraphSettings = {
 
 export const DEFAULT_GRAPH_SETTINGS: GraphSettings = {
   ignoreSources: true,
+  layoutMode: 'radial',
   enabledTypes: {
     concept: true,
     entity: true,

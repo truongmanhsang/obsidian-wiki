@@ -2,12 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import ForceGraph2D, { type ForceGraphMethods, type LinkObject, type NodeObject } from 'react-force-graph-2d'
 import { Focus, Maximize2, Network, PinOff, RotateCcw, Search, Settings2, X } from 'lucide-react'
 import { getGraph } from '../api'
+import { buildRadialPositions } from '../graphLayout'
 import {
   DEFAULT_GRAPH_SETTINGS,
   GRAPH_PAGE_TYPES,
   filterGraph,
   loadGraphSettings,
   normalizeGraphType,
+  type GraphLayoutMode,
   type GraphPageType,
   type GraphSettings,
 } from '../graphSettings'
@@ -50,9 +52,9 @@ function nodeTypeLabel(type: GraphPageType) {
 
 type PinnedPosition = { x: number; y: number }
 
-function loadPinnedPositions(): Record<string, PinnedPosition> {
+function loadPinnedPositions(layoutMode: GraphLayoutMode): Record<string, PinnedPosition> {
   try {
-    const raw = localStorage.getItem('memory-graph-pins-v1')
+    const raw = localStorage.getItem(`memory-graph-pins-${layoutMode}-v1`)
     if (!raw) return {}
     const parsed = JSON.parse(raw) as Record<string, PinnedPosition>
     return Object.fromEntries(
@@ -65,8 +67,8 @@ function loadPinnedPositions(): Record<string, PinnedPosition> {
   }
 }
 
-function savePinnedPositions(positions: Record<string, PinnedPosition>) {
-  localStorage.setItem('memory-graph-pins-v1', JSON.stringify(positions))
+function savePinnedPositions(layoutMode: GraphLayoutMode, positions: Record<string, PinnedPosition>) {
+  localStorage.setItem(`memory-graph-pins-${layoutMode}-v1`, JSON.stringify(positions))
 }
 
 export function GraphView({ onOpenPage }: { onOpenPage: (path: string) => void }) {
@@ -78,8 +80,12 @@ export function GraphView({ onOpenPage }: { onOpenPage: (path: string) => void }
   const [focusedNode, setFocusedNode] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [pinVersion, setPinVersion] = useState(0)
   const graphRef = useRef<ForceGraphMethods<GraphNode, GraphLink> | undefined>(undefined)
-  const pinnedPositions = useRef<Record<string, PinnedPosition>>(loadPinnedPositions())
+  const pinnedPositions = useRef<Record<GraphLayoutMode, Record<string, PinnedPosition>>>({
+    radial: loadPinnedPositions('radial'),
+    force: loadPinnedPositions('force'),
+  })
   const { ref: canvasRef, size } = useCanvasSize()
 
   useEffect(() => {
@@ -100,18 +106,24 @@ export function GraphView({ onOpenPage }: { onOpenPage: (path: string) => void }
 
   const graphData = useMemo(() => {
     if (!filtered) return { nodes: [] as CanvasNode[], links: [] as CanvasLink[] }
+    const radialPositions = settings.layoutMode === 'radial'
+      ? buildRadialPositions(filtered.nodes, filtered.degrees)
+      : new Map()
+
     return {
       nodes: filtered.nodes.map(node => {
-        const pinned = pinnedPositions.current[node.id]
+        const pinned = pinnedPositions.current[settings.layoutMode][node.id]
+        const radial = radialPositions.get(node.id)
+        const position = pinned ?? radial
         return {
           ...node,
           degree: filtered.degrees.get(node.id) ?? 0,
-          ...(pinned ? { fx: pinned.x, fy: pinned.y, x: pinned.x, y: pinned.y } : {}),
+          ...(position ? { fx: position.x, fy: position.y, x: position.x, y: position.y } : {}),
         }
       }) as CanvasNode[],
       links: filtered.links.map(link => ({ ...link })) as CanvasLink[],
     }
-  }, [filtered])
+  }, [filtered, settings.layoutMode, pinVersion])
 
   const neighbors = useMemo(() => {
     const map = new Map<string, Set<string>>()
@@ -175,14 +187,11 @@ export function GraphView({ onOpenPage }: { onOpenPage: (path: string) => void }
   }
 
   const releasePinnedNodes = () => {
-    pinnedPositions.current = {}
-    savePinnedPositions({})
-    graphData.nodes.forEach(node => {
-      node.fx = undefined
-      node.fy = undefined
-    })
+    pinnedPositions.current[settings.layoutMode] = {}
+    savePinnedPositions(settings.layoutMode, {})
     setFocusedNode(null)
-    graphRef.current?.d3ReheatSimulation()
+    setPinVersion(version => version + 1)
+    if (settings.layoutMode === 'force') graphRef.current?.d3ReheatSimulation()
   }
 
   if (loading) return <LoadingState label="Mapping vault links…" />
@@ -245,8 +254,8 @@ export function GraphView({ onOpenPage }: { onOpenPage: (path: string) => void }
                 minZoom={0.15}
                 maxZoom={12}
                 nodeRelSize={4}
-                warmupTicks={40}
-                cooldownTicks={160}
+                warmupTicks={settings.layoutMode === 'radial' ? 0 : 40}
+                cooldownTicks={settings.layoutMode === 'radial' ? 0 : 160}
                 d3VelocityDecay={0.32}
                 linkColor={link => {
                   const source = linkId(link.source)
@@ -305,11 +314,11 @@ export function GraphView({ onOpenPage }: { onOpenPage: (path: string) => void }
                   if (typeof node.x !== 'number' || typeof node.y !== 'number') return
                   node.fx = node.x
                   node.fy = node.y
-                  pinnedPositions.current = {
-                    ...pinnedPositions.current,
+                  pinnedPositions.current[settings.layoutMode] = {
+                    ...pinnedPositions.current[settings.layoutMode],
                     [String(node.id)]: { x: node.x, y: node.y },
                   }
-                  savePinnedPositions(pinnedPositions.current)
+                  savePinnedPositions(settings.layoutMode, pinnedPositions.current[settings.layoutMode])
                 }}
                 onNodeClick={node => {
                   if (node.type === 'source') {
@@ -338,6 +347,30 @@ export function GraphView({ onOpenPage }: { onOpenPage: (path: string) => void }
               <div className="graph-settings-header">
                 <div><strong>Graph settings</strong><span>Display & filters</span></div>
                 <button className="text-button" onClick={resetSettings}><RotateCcw size={12} /> Reset</button>
+              </div>
+
+              <div className="graph-setting-section">
+                <div className="graph-setting-title">Layout</div>
+                <div className="graph-layout-options" role="radiogroup" aria-label="Graph layout">
+                  <button
+                    className={settings.layoutMode === 'radial' ? 'active' : ''}
+                    onClick={() => updateSettings({ layoutMode: 'radial' })}
+                    role="radio"
+                    aria-checked={settings.layoutMode === 'radial'}
+                  >
+                    <strong>Radial</strong>
+                    <span>Even circular distribution</span>
+                  </button>
+                  <button
+                    className={settings.layoutMode === 'force' ? 'active' : ''}
+                    onClick={() => updateSettings({ layoutMode: 'force' })}
+                    role="radio"
+                    aria-checked={settings.layoutMode === 'force'}
+                  >
+                    <strong>Force</strong>
+                    <span>Relationship-driven clusters</span>
+                  </button>
+                </div>
               </div>
 
               <div className="graph-setting-section">

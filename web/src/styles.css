@@ -1738,3 +1738,40 @@ button.compact-row:hover { background: var(--surface-hover); }
   }
   .graph-main { position: relative; }
 }
+
+.graph-layout-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.graph-layout-options button {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px;
+  color: var(--muted);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+}
+.graph-layout-options button:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+.graph-layout-options button.active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+.graph-layout-options strong {
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 620;
+}
+.graph-layout-options button.active strong { color: var(--accent-strong); }
+.graph-layout-options span {
+  color: var(--muted-2);
+  font-size: 9px;
+  line-height: 1.35;
+}

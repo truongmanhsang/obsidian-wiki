@@ -13,6 +13,10 @@ const links: GraphLink[] = [
 ]
 
 describe('graph settings', () => {
+  it('uses the balanced radial layout by default', () => {
+    expect(DEFAULT_GRAPH_SETTINGS.layoutMode).toBe('radial')
+  })
+
   it('ignores source nodes by default', () => {
     const result = filterGraph(nodes, links, structuredClone(DEFAULT_GRAPH_SETTINGS))
     expect(result.nodes.map(node => node.id)).toEqual(['concepts/a.md', 'entities/b.md'])
